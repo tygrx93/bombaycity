@@ -23,7 +23,11 @@ export interface PhaserGameHandle {
   getCarCount: () => number;
   clearCharacters: () => void;
   clearCars: () => void;
-  shakeScreen: (axis?: "x" | "y", intensity?: number, duration?: number) => void;
+  shakeScreen: (
+    axis?: "x" | "y",
+    intensity?: number,
+    duration?: number
+  ) => void;
   zoomAtPoint: (zoom: number, screenX: number, screenY: number) => void;
   markTilesDirty: (tiles: Array<{ x: number; y: number }>) => void;
   centerCameraOnMap: () => void;
@@ -127,7 +131,11 @@ const PhaserGame = forwardRef<PhaserGameHandle, PhaserGameProps>(
             sceneRef.current.clearCars();
           }
         },
-        shakeScreen: (axis?: "x" | "y", intensity?: number, duration?: number) => {
+        shakeScreen: (
+          axis?: "x" | "y",
+          intensity?: number,
+          duration?: number
+        ) => {
           if (sceneRef.current) {
             sceneRef.current.shakeScreen(axis, intensity, duration);
           }

@@ -64,6 +64,9 @@ export interface Character {
 export enum CarType {
   Jeep = "jeep",
   Taxi = "taxi",
+  Waymo = "waymo",
+  Robotaxi = "robotaxi",
+  Zoox = "zoox",
 }
 
 export interface Car {

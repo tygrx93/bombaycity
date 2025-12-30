@@ -15,7 +15,7 @@ import {
   CHARACTER_SPEED,
   CAR_SPEED,
 } from "../types";
-import { GRID_OFFSET_X, GRID_OFFSET_Y } from "./gameConfig";
+import { GRID_OFFSET_X, GRID_OFFSET_Y, WORLD_WIDTH, WORLD_HEIGHT } from "./gameConfig";
 import {
   ROAD_SEGMENT_SIZE,
   getRoadSegmentOrigin,
@@ -97,6 +97,9 @@ export class MainScene extends Phaser.Scene {
   private grid: GridCell[][] = [];
   private characters: Character[] = [];
   private cars: Car[] = [];
+
+  // Reusable array for combined cars (avoids GC pressure from spreading every frame)
+  private allCarsCache: Car[] = [];
 
   // Tool state (synced from React)
   private selectedTool: ToolType = ToolType.RoadNetwork;
@@ -198,12 +201,22 @@ export class MainScene extends Phaser.Scene {
       }
     }
 
-    // Load car textures
-    const carTypes = ["jeep", "taxi"];
-    const directions = ["n", "s", "e", "w"];
-    for (const car of carTypes) {
-      for (const dir of directions) {
+    // Load car textures (old format: jeepn.png)
+    const oldCarTypes = ["jeep", "taxi"];
+    const shortDirs = ["n", "s", "e", "w"];
+    for (const car of oldCarTypes) {
+      for (const dir of shortDirs) {
         this.load.image(`${car}_${dir}`, `/cars/${car}${dir}.png`);
+      }
+    }
+
+    // Load car textures (new format: 1x1waymo_north.png)
+    const newCarTypes = ["waymo", "robotaxi", "zoox"];
+    const longDirs = ["north", "south", "east", "west"];
+    const dirMap: Record<string, string> = { north: "n", south: "s", east: "e", west: "w" };
+    for (const car of newCarTypes) {
+      for (const dir of longDirs) {
+        this.load.image(`${car}_${dirMap[dir]}`, `/cars/1x1${car}_${dir}.png`);
       }
     }
   }
@@ -249,6 +262,9 @@ export class MainScene extends Phaser.Scene {
     // Initialize empty grid
     this.initializeGrid();
 
+    // Set world bounds for camera (world is larger than viewport)
+    this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
     // Mark scene as ready
     this.isReady = true;
 
@@ -270,16 +286,16 @@ export class MainScene extends Phaser.Scene {
     this.loadCharacterAnimations();
 
     // Create stats display (fixed to camera, top-right corner)
-    this.statsText = this.add.text(0, 0, "", {
+    this.statsText = this.add.text(10, 100, "FPS: --", {
       fontFamily: "monospace",
-      fontSize: "12px",
+      fontSize: "14px",
       color: "#00ff00",
-      backgroundColor: "rgba(0,0,0,0.7)",
-      padding: { x: 8, y: 6 },
+      backgroundColor: "rgba(0,0,0,0.8)",
+      padding: { x: 10, y: 8 },
     });
-    this.statsText.setScrollFactor(0); // Fixed to camera
+    this.statsText.setScrollFactor(0); // Fixed to camera/viewport
     this.statsText.setDepth(2_000_000); // Always on top
-    this.statsText.setOrigin(1, 0); // Anchor to top-right
+    this.statsText.setOrigin(0, 0); // Anchor to top-left of text
     // Position will be updated in updateStatsDisplay based on camera size
   }
 
@@ -353,7 +369,19 @@ export class MainScene extends Phaser.Scene {
     this.updateStatsDisplay();
   }
 
+  private statsLogCounter = 0;
   private updateStatsDisplay(): void {
+    const fps = Math.round(this.game.loop.actualFps);
+    const charCount = this.characters.length;
+    const carCount = this.cars.length + (this.playerCar ? 1 : 0);
+
+    // Log every 60 frames (~1 second)
+    this.statsLogCounter++;
+    if (this.statsLogCounter >= 60) {
+      console.log(`[Stats] FPS: ${fps} | Characters: ${charCount} | Cars: ${carCount}`);
+      this.statsLogCounter = 0;
+    }
+
     if (!this.statsText || !this.showStats) {
       if (this.statsText) this.statsText.setVisible(false);
       return;
@@ -361,13 +389,9 @@ export class MainScene extends Phaser.Scene {
 
     this.statsText.setVisible(true);
 
-    // Position in top-right, accounting for zoom
+    // Position in bottom-left (origin is top-left of text, so offset by text height)
     const camera = this.cameras.main;
-    this.statsText.setPosition(camera.width - 10, 60);
-
-    const fps = Math.round(this.game.loop.actualFps);
-    const charCount = this.characters.length;
-    const carCount = this.cars.length + (this.playerCar ? 1 : 0);
+    this.statsText.setPosition(10, camera.height - this.statsText.height - 10);
 
     // Color FPS based on performance
     let fpsColor = "#00ff00"; // Green = good
@@ -616,6 +640,18 @@ export class MainScene extends Phaser.Scene {
   // CAR LOGIC (moved from React)
   // ============================================
 
+  // Get all cars (AI + player) without allocating a new array each call
+  private getAllCars(): Car[] {
+    this.allCarsCache.length = 0;
+    for (const car of this.cars) {
+      this.allCarsCache.push(car);
+    }
+    if (this.playerCar) {
+      this.allCarsCache.push(this.playerCar);
+    }
+    return this.allCarsCache;
+  }
+
   private updateCars(): void {
     for (let i = 0; i < this.cars.length; i++) {
       this.cars[i] = this.updateSingleCar(this.cars[i]);
@@ -649,7 +685,7 @@ export class MainScene extends Phaser.Scene {
     const aheadX = car.x + vec.dx * checkDist;
     const aheadY = car.y + vec.dy * checkDist;
 
-    const allCars = this.playerCar ? [...this.cars, this.playerCar] : this.cars;
+    const allCars = this.getAllCars();
     for (const other of allCars) {
       if (other.id === car.id) continue;
       const dist = Math.sqrt(
@@ -746,7 +782,7 @@ export class MainScene extends Phaser.Scene {
     const vec = directionVectors[car.direction];
     const MIN_CAR_SPACING = 1.8; // Increased to prevent visual overlap
 
-    const allCars = this.playerCar ? [...this.cars, this.playerCar] : this.cars;
+    const allCars = this.getAllCars();
     for (const other of allCars) {
       if (other.id === car.id) continue;
 
@@ -1528,7 +1564,8 @@ export class MainScene extends Phaser.Scene {
         allDirections[Math.floor(Math.random() * allDirections.length)];
     }
 
-    const carType = Math.random() < 0.5 ? CarType.Taxi : CarType.Jeep;
+    const carTypes = [CarType.Taxi, CarType.Jeep, CarType.Waymo, CarType.Robotaxi, CarType.Zoox];
+    const carType = carTypes[Math.floor(Math.random() * carTypes.length)];
 
     const newCar: Car = {
       id: generateId(),
@@ -2210,14 +2247,20 @@ export class MainScene extends Phaser.Scene {
     return `${building.id}_${firstDir}`;
   }
 
+  // Reusable Set for tracking current car IDs (avoids allocating new Set each frame)
+  private currentCarIdsCache: Set<string> = new Set();
+
   private renderCars(): void {
-    // Get all cars to render (AI + player)
-    const allCars = this.playerCar ? [...this.cars, this.playerCar] : this.cars;
-    const currentCarIds = new Set(allCars.map((c) => c.id));
+    // Get all cars to render (AI + player) - uses cached array
+    const allCars = this.getAllCars();
+    this.currentCarIdsCache.clear();
+    for (const car of allCars) {
+      this.currentCarIdsCache.add(car.id);
+    }
 
     // Remove sprites for cars that no longer exist
     this.carSprites.forEach((sprite, id) => {
-      if (!currentCarIds.has(id)) {
+      if (!this.currentCarIdsCache.has(id)) {
         sprite.destroy();
         this.carSprites.delete(id);
       }

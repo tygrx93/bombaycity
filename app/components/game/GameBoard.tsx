@@ -182,7 +182,7 @@ export default function GameBoard() {
   const [selectedTool, setSelectedTool] = useState<ToolType>(ToolType.None);
   const [zoom, setZoom] = useState(1);
   const [debugPaths, setDebugPaths] = useState(false);
-  const [showStats, setShowStats] = useState(false);
+  const [showStats, setShowStats] = useState(true);
   const [isToolWindowVisible, setIsToolWindowVisible] = useState(false);
   const [buildingOrientation, setBuildingOrientation] = useState<Direction>(
     Direction.Down

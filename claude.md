@@ -49,7 +49,7 @@ npm run lint    # ESLint
 ## Architecture
 
 **React-Phaser Communication:**
-- React manages: grid state (48x48), UI, tool selection
+- React manages: grid state (128x128), UI, tool selection
 - Phaser manages: rendering, characters, cars, animations
 - React → Phaser: via ref methods (`spawnCharacter()`, `shakeScreen()`)
 - Phaser → React: via callbacks (`onTileClick`, `onTilesDrag`)
@@ -126,3 +126,26 @@ Common solutions exist for: camera zoom/pan, input handling, tilemaps, physics, 
 ## Save/Load
 
 Saves to localStorage as JSON with: grid, character count, car count, zoom level, visual settings, timestamp.
+
+## Performance
+
+**Current optimizations:**
+- Canvas sized to viewport (not full world) - renders ~2M pixels instead of 18M
+- Grid uses direct mutation with `markTilesDirty()` pattern - O(1) updates instead of O(n²) copies
+- Reusable arrays for car lists (`getAllCars()`) - avoids GC pressure from spreading every frame
+- FPS syncs with monitor refresh rate via requestAnimationFrame
+
+**Why repetition is good:**
+WebGL batches draw calls by texture. 100 unique sprites × 10,000 uses ≈ 100 draw calls. Same building placed 50 times = 1 draw call for all 50. This is the ideal pattern for city builders.
+
+**Future optimization opportunities (when needed):**
+- **Ground tiles:** Currently 16K individual sprites. Could use Phaser Tilemap for 1 draw call. Worth doing once tile designs stabilize.
+- **Blitter:** For many identical sprites (trees, props), Blitter batches into single draw call without tilemap refactor.
+- **LOD:** At far zoom, could swap detailed buildings for simpler sprites.
+- **Chunked rendering:** Only render visible chunks of the map.
+
+**Watch out for:**
+- Depth sorting gets expensive with 1000+ buildings (sorts every frame)
+- Pathfinding/collision scales with entity count (characters, cars)
+- Creating new arrays/objects in update loop causes GC stutters
+- Each unique texture = potential new draw call batch
