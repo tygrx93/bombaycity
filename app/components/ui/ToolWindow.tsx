@@ -373,7 +373,7 @@ export default function ToolWindow({
                 className={`rct-button ${
                   selectedTool === ToolType.TwoWayRoad ? "active" : ""
                 }`}
-                title="2-Way Road (drag to place)"
+                title="2-Way Road: Parallel lanes with opposite directions"
                 style={{
                   display: "flex",
                   flexDirection: "column",
@@ -385,7 +385,7 @@ export default function ToolWindow({
               >
                 <img
                   src="/Tiles/1x1asphalt.png"
-                  alt="2-Way Road"
+                  alt="2-Way"
                   style={{
                     width: 40,
                     height: 40,
@@ -393,7 +393,7 @@ export default function ToolWindow({
                     imageRendering: "pixelated",
                   }}
                 />
-                <span style={{ fontSize: 11, marginTop: 4 }}>2-Way</span>
+                <span style={{ fontSize: 11, marginTop: 4 }}>↔ 2-Way</span>
               </button>
               <button
                 onClick={() => {

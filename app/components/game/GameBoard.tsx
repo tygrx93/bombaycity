@@ -55,6 +55,8 @@ import {
   getRoadLaneOrigin,
   hasRoadLane,
   canPlaceRoadLane,
+  updateDeadEnds,
+  isRoadTileType,
 } from "./roadUtils";
 import { getBuilding, getBuildingFootprint, getPropSlots } from "@/app/data/buildings";
 import dynamic from "next/dynamic";
@@ -598,32 +600,91 @@ export default function GameBoard() {
             const shouldPlaySound = cellType !== TileType.Grass;
 
             if (originX !== undefined && originY !== undefined) {
-              // Road lane deletion - handles both RoadLane and RoadTurn
+              // Road lane deletion (2x2) - handles both RoadLane and RoadTurn
+              // Also detects and deletes full 2-way road segments (both lanes + sidewalks)
               const isRoadTile =
                 cellType === TileType.RoadLane || cellType === TileType.RoadTurn;
 
               if (isRoadTile) {
-                // Delete the entire road lot (finds all cells with same origin)
-                // Road lots can be 2x4 or 4x2 for 2-way roads, so scan 4x4 area
-                const lotOriginX: number = originX;
-                const lotOriginY: number = originY;
-                const ROAD_LOT_MAX = ROAD_LANE_SIZE * 2; // 4 subtiles max
-                for (let dy = 0; dy < ROAD_LOT_MAX; dy++) {
-                  for (let dx = 0; dx < ROAD_LOT_MAX; dx++) {
-                    const px = lotOriginX + dx;
-                    const py = lotOriginY + dy;
-                    if (px < GRID_WIDTH && py < GRID_HEIGHT) {
-                      const checkCell = grid[py][px];
-                      // Only delete if this cell points to the same origin
-                      if (checkCell.originX === lotOriginX && checkCell.originY === lotOriginY &&
-                          (checkCell.type === TileType.RoadLane || checkCell.type === TileType.RoadTurn)) {
+                // Helper to delete a 2x2 block
+                const delete2x2Block = (bx: number, by: number) => {
+                  for (let dy = 0; dy < ROAD_LANE_SIZE; dy++) {
+                    for (let dx = 0; dx < ROAD_LANE_SIZE; dx++) {
+                      const px = bx + dx;
+                      const py = by + dy;
+                      if (px >= 0 && px < GRID_WIDTH && py >= 0 && py < GRID_HEIGHT) {
                         grid[py][px].type = TileType.Grass;
                         grid[py][px].isOrigin = true;
                         grid[py][px].originX = undefined;
                         grid[py][px].originY = undefined;
                         grid[py][px].laneDirection = undefined;
+                        grid[py][px].buildingId = undefined;
                         dirtyTiles.push({ x: px, y: py });
                       }
+                    }
+                  }
+                };
+
+                // Check if this is part of a 2-way road by looking for parallel lane
+                const laneDir = cell.laneDirection;
+                let isTwoWayRoad = false;
+                let parallelLaneOrigin: { x: number; y: number } | null = null;
+                let sidewalk1Origin: { x: number; y: number } | null = null;
+                let sidewalk2Origin: { x: number; y: number } | null = null;
+
+                if (laneDir === Direction.Right || laneDir === Direction.Left) {
+                  // Horizontal road - check for parallel lane above or below
+                  const checkY = laneDir === Direction.Right ? originY - ROAD_LANE_SIZE : originY + ROAD_LANE_SIZE;
+                  const parallelCell = grid[checkY]?.[originX];
+                  if (parallelCell && isRoadTileType(parallelCell.type) && parallelCell.isOrigin) {
+                    const expectedDir = laneDir === Direction.Right ? Direction.Left : Direction.Right;
+                    if (parallelCell.laneDirection === expectedDir) {
+                      isTwoWayRoad = true;
+                      parallelLaneOrigin = { x: originX, y: checkY };
+                      // Sidewalks: above the top lane and below the bottom lane
+                      const topY = Math.min(originY, checkY);
+                      const bottomY = Math.max(originY, checkY) + ROAD_LANE_SIZE;
+                      sidewalk1Origin = { x: originX, y: topY - ROAD_LANE_SIZE };
+                      sidewalk2Origin = { x: originX, y: bottomY };
+                    }
+                  }
+                } else if (laneDir === Direction.Down || laneDir === Direction.Up) {
+                  // Vertical road - check for parallel lane left or right
+                  const checkX = laneDir === Direction.Down ? originX + ROAD_LANE_SIZE : originX - ROAD_LANE_SIZE;
+                  const parallelCell = grid[originY]?.[checkX];
+                  if (parallelCell && isRoadTileType(parallelCell.type) && parallelCell.isOrigin) {
+                    const expectedDir = laneDir === Direction.Down ? Direction.Up : Direction.Down;
+                    if (parallelCell.laneDirection === expectedDir) {
+                      isTwoWayRoad = true;
+                      parallelLaneOrigin = { x: checkX, y: originY };
+                      // Sidewalks: left of the left lane and right of the right lane
+                      const leftX = Math.min(originX, checkX);
+                      const rightX = Math.max(originX, checkX) + ROAD_LANE_SIZE;
+                      sidewalk1Origin = { x: leftX - ROAD_LANE_SIZE, y: originY };
+                      sidewalk2Origin = { x: rightX, y: originY };
+                    }
+                  }
+                }
+
+                // Delete the primary lane
+                delete2x2Block(originX, originY);
+
+                if (isTwoWayRoad) {
+                  // Delete parallel lane
+                  if (parallelLaneOrigin) {
+                    delete2x2Block(parallelLaneOrigin.x, parallelLaneOrigin.y);
+                  }
+                  // Delete sidewalks if they exist
+                  if (sidewalk1Origin) {
+                    const s1Cell = grid[sidewalk1Origin.y]?.[sidewalk1Origin.x];
+                    if (s1Cell?.type === TileType.Sidewalk) {
+                      delete2x2Block(sidewalk1Origin.x, sidewalk1Origin.y);
+                    }
+                  }
+                  if (sidewalk2Origin) {
+                    const s2Cell = grid[sidewalk2Origin.y]?.[sidewalk2Origin.x];
+                    if (s2Cell?.type === TileType.Sidewalk) {
+                      delete2x2Block(sidewalk2Origin.x, sidewalk2Origin.y);
                     }
                   }
                 }
@@ -817,6 +878,7 @@ export default function GameBoard() {
       }
 
       if (dirtyTiles.length > 0) {
+        // No auto-conversion for 1-way roads - user places turn tiles manually
         phaserGameRef.current?.markTilesDirty(dirtyTiles);
         playBuildRoadSound();
         forceGridUpdate();
@@ -825,98 +887,208 @@ export default function GameBoard() {
     []
   );
 
-  // Handle 2-way road placement (two parallel lanes with opposite directions)
+  // Handle 2-way road placement with sidewalks
+  // Complete road structure (6 subtiles wide):
+  //   Horizontal: sidewalk row, lane (right), lane (left), sidewalk row
+  //   Vertical: sidewalk col, lane (down), lane (up), sidewalk col
   const handleTwoWayRoadDrag = useCallback(
     (lanes: Array<{ x: number; y: number }>, orientation: "horizontal" | "vertical") => {
       if (lanes.length === 0) return;
 
       const grid = gridRef.current;
       const dirtyTiles: Array<{ x: number; y: number }> = [];
+      const placedLanes = new Set<string>();
 
-      // Group lanes into pairs (road lots)
-      // Horizontal: lanes share same X, differ by ROAD_LANE_SIZE in Y
-      // Vertical: lanes share same Y, differ by ROAD_LANE_SIZE in X
-      const laneSet = new Set(lanes.map(l => `${l.x},${l.y}`));
-      const processedLanes = new Set<string>();
-
+      // First pass: place all lanes (allow overlap for intersections)
       for (const { x: laneX, y: laneY } of lanes) {
-        const key = `${laneX},${laneY}`;
-        if (processedLanes.has(key)) continue;
+        const placementCheck = canPlaceRoadLane(grid, laneX, laneY, true);
+        if (!placementCheck.valid) continue;
 
-        // Find the paired lane for this 2-way road lot
-        let pairedLaneX = laneX;
-        let pairedLaneY = laneY;
+        // Determine direction based on position within the 2-way road
+        // Right-hand traffic: stay on the right side of road
+        let direction: Direction;
         if (orientation === "horizontal") {
-          // Paired lane is below (same X, Y + ROAD_LANE_SIZE)
-          pairedLaneY = laneY + ROAD_LANE_SIZE;
+          // Top lane goes Left (←westbound), bottom lane goes Right (→eastbound)
+          const hasLaneBelow = lanes.some(l => l.x === laneX && l.y === laneY + ROAD_LANE_SIZE);
+          direction = hasLaneBelow ? Direction.Left : Direction.Right;
         } else {
-          // Paired lane is to the right (X + ROAD_LANE_SIZE, same Y)
-          pairedLaneX = laneX + ROAD_LANE_SIZE;
-        }
-        const pairedKey = `${pairedLaneX},${pairedLaneY}`;
-
-        // Skip if we already processed this pair from the other lane
-        if (processedLanes.has(pairedKey)) continue;
-
-        // Both lanes must be valid for placement
-        const check1 = canPlaceRoadLane(grid, laneX, laneY);
-        const check2 = canPlaceRoadLane(grid, pairedLaneX, pairedLaneY);
-        if (!check1.valid || !check2.valid) continue;
-
-        // Mark both as processed
-        processedLanes.add(key);
-        processedLanes.add(pairedKey);
-
-        // Road lot origin is the top-left of the entire 2-way road
-        const lotOriginX = laneX;
-        const lotOriginY = laneY;
-
-        // Determine directions for each lane
-        let lane1Dir: Direction, lane2Dir: Direction;
-        if (orientation === "horizontal") {
-          // Horizontal: top lane goes Right, bottom goes Left
-          lane1Dir = Direction.Right;
-          lane2Dir = Direction.Left;
-        } else {
-          // Vertical: left lane goes Down, right goes Up
-          lane1Dir = Direction.Down;
-          lane2Dir = Direction.Up;
+          // Left lane goes Down (↓southbound), right lane goes Up (↑northbound)
+          const hasLaneRight = lanes.some(l => l.y === laneY && l.x === laneX + ROAD_LANE_SIZE);
+          direction = hasLaneRight ? Direction.Down : Direction.Up;
         }
 
-        // Place first lane (top or left)
-        for (let dy = 0; dy < ROAD_LANE_SIZE; dy++) {
-          for (let dx = 0; dx < ROAD_LANE_SIZE; dx++) {
-            const px = laneX + dx;
-            const py = laneY + dy;
-            if (px < GRID_WIDTH && py < GRID_HEIGHT) {
-              grid[py][px].type = TileType.RoadLane;
-              grid[py][px].isOrigin = dx === 0 && dy === 0;
-              grid[py][px].originX = lotOriginX;
-              grid[py][px].originY = lotOriginY;
-              grid[py][px].laneDirection = lane1Dir;
-              dirtyTiles.push({ x: px, y: py });
+        // Place 2x2 road lane
+        const existingCell = grid[laneY]?.[laneX];
+        const existingDir = existingCell?.laneDirection;
+
+        // Only treat as intersection if roads are PERPENDICULAR
+        // (extending a road in same/opposite direction is NOT an intersection)
+        const isHorizontal = (d: Direction) => d === Direction.Right || d === Direction.Left;
+        const isVertical = (d: Direction) => d === Direction.Down || d === Direction.Up;
+        const isPerpendicular = existingDir && (
+          (isHorizontal(existingDir) && isVertical(direction)) ||
+          (isVertical(existingDir) && isHorizontal(direction))
+        );
+        const isIntersection = existingCell && isRoadTileType(existingCell.type) && isPerpendicular;
+
+        if (isIntersection && existingDir) {
+          // At PERPENDICULAR intersection: assign direction based on quadrant
+          //
+          // 4-way intersection pattern (rotated turn tiles for right-hand traffic):
+          //   ↓  ←   (top-left=Down, top-right=Left)
+          //   →  ↑   (bottom-left=Right, bottom-right=Up)
+          //
+          // Each cell's direction = the direction traffic ENTERS from that side
+          // RoadTurn allows going straight OR turning right
+          //
+          // Horizontal lanes: Right=top, Left=bottom
+          // Vertical lanes: Down=left, Up=right
+          const existingIsHorizontal = existingDir === Direction.Right || existingDir === Direction.Left;
+
+          let isTopLane: boolean;
+          let isLeftLane: boolean;
+
+          if (existingIsHorizontal) {
+            // Existing is horizontal, new is vertical
+            // Horizontal: Left(←)=top, Right(→)=bottom
+            // Vertical: Down(↓)=left, Up(↑)=right
+            isTopLane = existingDir === Direction.Left;
+            isLeftLane = direction === Direction.Down;
+          } else {
+            // Existing is vertical, new is horizontal
+            isTopLane = direction === Direction.Left;
+            isLeftLane = existingDir === Direction.Down;
+          }
+
+          // Pattern for right-hand traffic (enter cell, go straight or turn right):
+          //   ↓  ←   (top-left=Down for ↓traffic, top-right=Left for ←traffic)
+          //   →  ↑   (bottom-left=Right for →traffic, bottom-right=Up for ↑traffic)
+          let intersectionDir: Direction;
+          if (isTopLane && isLeftLane) intersectionDir = Direction.Down;
+          else if (isTopLane && !isLeftLane) intersectionDir = Direction.Left;
+          else if (!isTopLane && isLeftLane) intersectionDir = Direction.Right;
+          else intersectionDir = Direction.Up;
+
+          for (let dy = 0; dy < ROAD_LANE_SIZE; dy++) {
+            for (let dx = 0; dx < ROAD_LANE_SIZE; dx++) {
+              const px = laneX + dx;
+              const py = laneY + dy;
+              if (px < GRID_WIDTH && py < GRID_HEIGHT) {
+                grid[py][px].type = TileType.RoadTurn;
+                grid[py][px].isOrigin = dx === 0 && dy === 0;
+                grid[py][px].originX = laneX;
+                grid[py][px].originY = laneY;
+                grid[py][px].laneDirection = intersectionDir;
+                dirtyTiles.push({ x: px, y: py });
+              }
+            }
+          }
+        } else {
+          // Normal lane placement
+          for (let dy = 0; dy < ROAD_LANE_SIZE; dy++) {
+            for (let dx = 0; dx < ROAD_LANE_SIZE; dx++) {
+              const px = laneX + dx;
+              const py = laneY + dy;
+              if (px < GRID_WIDTH && py < GRID_HEIGHT) {
+                grid[py][px].type = TileType.RoadLane;
+                grid[py][px].isOrigin = dx === 0 && dy === 0;
+                grid[py][px].originX = laneX;
+                grid[py][px].originY = laneY;
+                grid[py][px].laneDirection = direction;
+                dirtyTiles.push({ x: px, y: py });
+              }
             }
           }
         }
+        placedLanes.add(`${laneX},${laneY}`);
+      }
 
-        // Place second lane (bottom or right) - points to same lot origin
-        for (let dy = 0; dy < ROAD_LANE_SIZE; dy++) {
-          for (let dx = 0; dx < ROAD_LANE_SIZE; dx++) {
-            const px = pairedLaneX + dx;
-            const py = pairedLaneY + dy;
-            if (px < GRID_WIDTH && py < GRID_HEIGHT) {
-              grid[py][px].type = TileType.RoadLane;
-              grid[py][px].isOrigin = false; // Only lot origin is true
-              grid[py][px].originX = lotOriginX;
-              grid[py][px].originY = lotOriginY;
-              grid[py][px].laneDirection = lane2Dir;
-              dirtyTiles.push({ x: px, y: py });
+      // Second pass: place 2x2 sidewalk blocks on outer edges (matching lane size)
+      if (orientation === "horizontal") {
+        // Group lanes by x position to find road segments
+        const lanesByX = new Map<number, number[]>();
+        for (const { x: laneX, y: laneY } of lanes) {
+          if (!placedLanes.has(`${laneX},${laneY}`)) continue;
+          if (!lanesByX.has(laneX)) lanesByX.set(laneX, []);
+          lanesByX.get(laneX)!.push(laneY);
+        }
+
+        for (const [x, ys] of lanesByX) {
+          const minY = Math.min(...ys);
+          const maxY = Math.max(...ys);
+
+          // Sidewalk block above top lane (2x2 block at y = minY - 2)
+          for (let sy = 0; sy < ROAD_LANE_SIZE; sy++) {
+            for (let dx = 0; dx < ROAD_LANE_SIZE; dx++) {
+              const px = x + dx;
+              const py = minY - ROAD_LANE_SIZE + sy;
+              if (py >= 0 && px < GRID_WIDTH && grid[py]?.[px]?.type === TileType.Grass) {
+                grid[py][px].type = TileType.Sidewalk;
+                dirtyTiles.push({ x: px, y: py });
+              }
+            }
+          }
+
+          // Sidewalk block below bottom lane (2x2 block at y = maxY + ROAD_LANE_SIZE)
+          for (let sy = 0; sy < ROAD_LANE_SIZE; sy++) {
+            for (let dx = 0; dx < ROAD_LANE_SIZE; dx++) {
+              const px = x + dx;
+              const py = maxY + ROAD_LANE_SIZE + sy;
+              if (py < GRID_HEIGHT && px < GRID_WIDTH && grid[py]?.[px]?.type === TileType.Grass) {
+                grid[py][px].type = TileType.Sidewalk;
+                dirtyTiles.push({ x: px, y: py });
+              }
+            }
+          }
+        }
+      } else {
+        // Vertical road - group lanes by y position
+        const lanesByY = new Map<number, number[]>();
+        for (const { x: laneX, y: laneY } of lanes) {
+          if (!placedLanes.has(`${laneX},${laneY}`)) continue;
+          if (!lanesByY.has(laneY)) lanesByY.set(laneY, []);
+          lanesByY.get(laneY)!.push(laneX);
+        }
+
+        for (const [y, xs] of lanesByY) {
+          const minX = Math.min(...xs);
+          const maxX = Math.max(...xs);
+
+          // Sidewalk block left of left lane (2x2 block at x = minX - 2)
+          for (let sx = 0; sx < ROAD_LANE_SIZE; sx++) {
+            for (let dy = 0; dy < ROAD_LANE_SIZE; dy++) {
+              const px = minX - ROAD_LANE_SIZE + sx;
+              const py = y + dy;
+              if (px >= 0 && py < GRID_HEIGHT && grid[py]?.[px]?.type === TileType.Grass) {
+                grid[py][px].type = TileType.Sidewalk;
+                dirtyTiles.push({ x: px, y: py });
+              }
+            }
+          }
+
+          // Sidewalk block right of right lane (2x2 block at x = maxX + ROAD_LANE_SIZE)
+          for (let sx = 0; sx < ROAD_LANE_SIZE; sx++) {
+            for (let dy = 0; dy < ROAD_LANE_SIZE; dy++) {
+              const px = maxX + ROAD_LANE_SIZE + sx;
+              const py = y + dy;
+              if (px < GRID_WIDTH && py < GRID_HEIGHT && grid[py]?.[px]?.type === TileType.Grass) {
+                grid[py][px].type = TileType.Sidewalk;
+                dirtyTiles.push({ x: px, y: py });
+              }
             }
           }
         }
       }
 
       if (dirtyTiles.length > 0) {
+        // NOTE: Intersection detection is handled during placement above (perpendicular overlap = RoadTurn)
+        // Do NOT call updateIntersections here - it incorrectly converts approach lanes to RoadTurn
+        // because they have perpendicular neighbors (the intersection itself)
+
+        // Detect and update dead ends (convert to RoadTurn for U-turns)
+        const deadEndTiles = updateDeadEnds(grid, dirtyTiles);
+        dirtyTiles.push(...deadEndTiles);
+
         phaserGameRef.current?.markTilesDirty(dirtyTiles);
         playBuildRoadSound();
         forceGridUpdate();
@@ -948,24 +1120,96 @@ export default function GameBoard() {
         const cellType = cell.type;
 
         if (cellType === TileType.RoadLane || cellType === TileType.RoadTurn) {
-          // Delete road lot - find all cells pointing to this origin
-          // Road lots can be 2x4 (horizontal) or 4x2 (vertical), so scan 4x4 area
-          const ROAD_LOT_MAX = ROAD_LANE_SIZE * 2; // 4 subtiles max
-          for (let dy = 0; dy < ROAD_LOT_MAX; dy++) {
-            for (let dx = 0; dx < ROAD_LOT_MAX; dx++) {
-              const px = originX + dx;
-              const py = originY + dy;
-              if (px < GRID_WIDTH && py < GRID_HEIGHT) {
-                const checkCell = grid[py][px];
-                // Only delete if this cell points to the same origin
-                if (checkCell.originX === originX && checkCell.originY === originY &&
-                    (checkCell.type === TileType.RoadLane || checkCell.type === TileType.RoadTurn)) {
+          // Check if this is part of a 2-way road by looking for parallel lane
+          const laneDir = cell.laneDirection;
+          let isTwoWayRoad = false;
+          let parallelLaneOrigin: { x: number; y: number } | null = null;
+          let sidewalk1Origin: { x: number; y: number } | null = null;
+          let sidewalk2Origin: { x: number; y: number } | null = null;
+
+          if (laneDir === Direction.Right || laneDir === Direction.Left) {
+            // Horizontal road - check for parallel lane above or below
+            const checkY = laneDir === Direction.Right ? originY + ROAD_LANE_SIZE : originY - ROAD_LANE_SIZE;
+            const parallelCell = grid[checkY]?.[originX];
+            if (parallelCell && isRoadTileType(parallelCell.type) && parallelCell.isOrigin) {
+              const expectedDir = laneDir === Direction.Right ? Direction.Left : Direction.Right;
+              if (parallelCell.laneDirection === expectedDir) {
+                isTwoWayRoad = true;
+                parallelLaneOrigin = { x: originX, y: checkY };
+                // Sidewalks: above the top lane and below the bottom lane
+                const topY = Math.min(originY, checkY);
+                const bottomY = Math.max(originY, checkY) + ROAD_LANE_SIZE;
+                sidewalk1Origin = { x: originX, y: topY - ROAD_LANE_SIZE };
+                sidewalk2Origin = { x: originX, y: bottomY };
+              }
+            }
+          } else if (laneDir === Direction.Down || laneDir === Direction.Up) {
+            // Vertical road - check for parallel lane left or right
+            const checkX = laneDir === Direction.Down ? originX + ROAD_LANE_SIZE : originX - ROAD_LANE_SIZE;
+            const parallelCell = grid[originY]?.[checkX];
+            if (parallelCell && isRoadTileType(parallelCell.type) && parallelCell.isOrigin) {
+              const expectedDir = laneDir === Direction.Down ? Direction.Up : Direction.Down;
+              if (parallelCell.laneDirection === expectedDir) {
+                isTwoWayRoad = true;
+                parallelLaneOrigin = { x: checkX, y: originY };
+                // Sidewalks: left of the left lane and right of the right lane
+                const leftX = Math.min(originX, checkX);
+                const rightX = Math.max(originX, checkX) + ROAD_LANE_SIZE;
+                sidewalk1Origin = { x: leftX - ROAD_LANE_SIZE, y: originY };
+                sidewalk2Origin = { x: rightX, y: originY };
+              }
+            }
+          }
+
+          // Helper to delete a 2x2 block
+          const delete2x2Block = (bx: number, by: number) => {
+            for (let dy = 0; dy < ROAD_LANE_SIZE; dy++) {
+              for (let dx = 0; dx < ROAD_LANE_SIZE; dx++) {
+                const px = bx + dx;
+                const py = by + dy;
+                if (px >= 0 && px < GRID_WIDTH && py >= 0 && py < GRID_HEIGHT) {
                   grid[py][px].type = TileType.Grass;
                   grid[py][px].isOrigin = true;
                   grid[py][px].originX = undefined;
                   grid[py][px].originY = undefined;
                   grid[py][px].laneDirection = undefined;
+                  grid[py][px].buildingId = undefined;
                   dirtyTiles.push({ x: px, y: py });
+                }
+              }
+            }
+          };
+
+          // Delete the primary lane
+          delete2x2Block(originX, originY);
+
+          if (isTwoWayRoad) {
+            // Delete parallel lane
+            if (parallelLaneOrigin) {
+              const pKey = `${parallelLaneOrigin.x},${parallelLaneOrigin.y}`;
+              if (!deletedOrigins.has(pKey)) {
+                deletedOrigins.add(pKey);
+                delete2x2Block(parallelLaneOrigin.x, parallelLaneOrigin.y);
+              }
+            }
+            // Delete sidewalks if they exist
+            if (sidewalk1Origin) {
+              const s1Cell = grid[sidewalk1Origin.y]?.[sidewalk1Origin.x];
+              if (s1Cell?.type === TileType.Sidewalk) {
+                const s1Key = `${sidewalk1Origin.x},${sidewalk1Origin.y}`;
+                if (!deletedOrigins.has(s1Key)) {
+                  deletedOrigins.add(s1Key);
+                  delete2x2Block(sidewalk1Origin.x, sidewalk1Origin.y);
+                }
+              }
+            }
+            if (sidewalk2Origin) {
+              const s2Cell = grid[sidewalk2Origin.y]?.[sidewalk2Origin.x];
+              if (s2Cell?.type === TileType.Sidewalk) {
+                const s2Key = `${sidewalk2Origin.x},${sidewalk2Origin.y}`;
+                if (!deletedOrigins.has(s2Key)) {
+                  deletedOrigins.add(s2Key);
+                  delete2x2Block(sidewalk2Origin.x, sidewalk2Origin.y);
                 }
               }
             }
@@ -1094,9 +1338,11 @@ export default function GameBoard() {
     if (phaserGameRef.current) {
       const success = phaserGameRef.current.spawnCar();
       if (!success) {
-        // Silently fail - could be no roads or spawn point occupied
-        // User can just click again
-        console.log("[Spawn Car] Could not spawn - no roads or spawn blocked");
+        setModalState({
+          isVisible: true,
+          title: "Cannot Spawn Car",
+          message: "Please place some road lanes first!",
+        });
       }
     }
   }, []);

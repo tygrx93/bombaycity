@@ -14,6 +14,7 @@ import {
   CarType,
   TileType,
   Direction,
+  TurnType,
   GRID_WIDTH,
   GRID_HEIGHT,
   CAR_SPEED,
@@ -24,6 +25,7 @@ import {
   directionVectors,
   oppositeDirection,
   rightTurnDirection,
+  leftTurnDirection,
   isRoadTileType,
 } from "../roadUtils";
 
@@ -232,30 +234,58 @@ export class TrafficManager {
 
       if (!nextLane || !this.canEnterLane(nextLane, direction)) {
         // Can't continue straight - need to turn or stop
-        const newDir = this.pickNextDirection(car, currentLane);
-        const altLane = this.getNextLane(currentLane.originX, currentLane.originY, newDir);
+        const pickResult = this.pickNextDirection(car, currentLane);
+        const altLane = this.getNextLane(currentLane.originX, currentLane.originY, pickResult.dir);
 
-        if (altLane && this.canEnterLane(altLane, newDir)) {
+        if (altLane && this.canEnterLane(altLane, pickResult.dir)) {
           // Can turn - snap to center and change direction
-          newDirection = newDir;
+          newDirection = pickResult.dir;
           nextX = laneCenter.x;
           nextY = laneCenter.y;
+          // Update lastTurn for this car
+          car = { ...car, lastTurn: pickResult.turn };
         } else {
           // Dead end - stay at center
           return { ...car, x: laneCenter.x, y: laneCenter.y, direction, waiting: newWaiting };
         }
       } else if (currentLane.type === TileType.RoadTurn) {
         // At a turn tile with valid straight path - randomly decide to turn
-        const rightDir = rightTurnDirection[currentLane.direction];
-        const rightLane = this.getNextLane(currentLane.originX, currentLane.originY, rightDir);
+        // RULE: Only 1 turn allowed per intersection - if lastTurn is "left" or "right", go straight
+        const alreadyTurned = car.lastTurn === "left" || car.lastTurn === "right";
 
-        if (rightLane && this.canEnterLane(rightLane, rightDir) && Math.random() < 0.3) {
-          // Take the turn
-          newDirection = rightDir;
-          nextX = laneCenter.x;
-          nextY = laneCenter.y;
+        if (!alreadyTurned) {
+          // Haven't turned yet in this intersection - can turn
+          const turnOptions: Array<{ dir: Direction; turn: "left" | "right" }> = [];
+
+          // Check right turn
+          const rightDir = rightTurnDirection[direction];
+          const rightLane = this.getNextLane(currentLane.originX, currentLane.originY, rightDir);
+          if (rightLane && this.canEnterLane(rightLane, rightDir)) {
+            turnOptions.push({ dir: rightDir, turn: "right" });
+          }
+
+          // Check left turn
+          const leftDir = leftTurnDirection[direction];
+          const leftLane = this.getNextLane(currentLane.originX, currentLane.originY, leftDir);
+          if (leftLane && this.canEnterLane(leftLane, leftDir)) {
+            turnOptions.push({ dir: leftDir, turn: "left" });
+          }
+
+          // Randomly pick: 70% go straight, 30% turn (if options available)
+          if (turnOptions.length > 0 && Math.random() < 0.3) {
+            const chosen = turnOptions[Math.floor(Math.random() * turnOptions.length)];
+            newDirection = chosen.dir;
+            nextX = laneCenter.x;
+            nextY = laneCenter.y;
+            car = { ...car, lastTurn: chosen.turn };
+          }
         }
-        // Otherwise continue straight (direction unchanged)
+        // If already turned or going straight, just continue (direction unchanged)
+      } else {
+        // On RoadLane (not intersection) - reset lastTurn so car can turn at next intersection
+        if (car.lastTurn !== "straight" && car.lastTurn !== "none") {
+          car = { ...car, lastTurn: "straight" };
+        }
       }
     }
 
@@ -274,42 +304,73 @@ export class TrafficManager {
     return { ...car, x: nextX, y: nextY, direction: newDirection, waiting: newWaiting };
   }
 
-  // Pick next direction at a lane
-  // RoadLane = straight only, RoadTurn = straight OR right turn
-  private pickNextDirection(car: Car, currentLane: { originX: number; originY: number; direction: Direction; type: TileType }): Direction {
+  // Pick next direction at a lane (used when car can't go straight)
+  // Returns direction and turn type for lastTurn tracking
+  // RoadLane = straight only
+  // RoadTurn = straight, right turn, left turn (if lastTurn != "left"), or U-turn (at dead ends)
+  private pickNextDirection(car: Car, currentLane: { originX: number; originY: number; direction: Direction; type: TileType }): { dir: Direction; turn: TurnType } {
     const laneDir = currentLane.direction;
     const rightDir = rightTurnDirection[laneDir];
+    const leftDir = leftTurnDirection[laneDir];
+
+    // U-turn direction: perpendicular toward the parallel lane
+    // Right-hand traffic layout:
+    //   Horizontal: Left(←) is top, Right(→) is bottom
+    //   Vertical: Down(↓) is left, Up(↑) is right
+    const uTurnMoveDir: Record<Direction, Direction> = {
+      [Direction.Right]: Direction.Up,     // → lane is bottom, parallel ← is above
+      [Direction.Left]: Direction.Down,    // ← lane is top, parallel → is below
+      [Direction.Down]: Direction.Right,   // ↓ lane is left, parallel ↑ is to the right
+      [Direction.Up]: Direction.Left,      // ↑ lane is right, parallel ↓ is to the left
+    };
 
     // Get possible directions based on tile type
-    const possibleDirs: Direction[] = [];
+    const possibleOptions: Array<{ dir: Direction; turn: TurnType }> = [];
 
     // Straight is always an option (if lane exists)
     if (this.canGoDirection(currentLane, laneDir)) {
-      possibleDirs.push(laneDir);
+      possibleOptions.push({ dir: laneDir, turn: "straight" });
     }
 
-    // Right turn only available on RoadTurn tiles
-    if (currentLane.type === TileType.RoadTurn) {
+    // Turn options only available on RoadTurn tiles AND if car hasn't already turned
+    // RULE: Only 1 turn allowed per intersection
+    const alreadyTurned = car.lastTurn === "left" || car.lastTurn === "right";
+    if (currentLane.type === TileType.RoadTurn && !alreadyTurned) {
+      // Right turn
       if (this.canGoDirection(currentLane, rightDir)) {
-        possibleDirs.push(rightDir);
+        possibleOptions.push({ dir: rightDir, turn: "right" });
+      }
+      // Left turn
+      if (this.canGoDirection(currentLane, leftDir)) {
+        possibleOptions.push({ dir: leftDir, turn: "left" });
       }
     }
 
-    if (possibleDirs.length === 0) {
-      // Dead end - return lane direction (car will stop)
-      return laneDir;
+    // U-turn available on RoadTurn at dead ends
+    // Only if no forward, right, or left options exist
+    if (currentLane.type === TileType.RoadTurn && possibleOptions.length === 0) {
+      const uDir = uTurnMoveDir[laneDir];
+      if (this.canGoDirection(currentLane, uDir)) {
+        possibleOptions.push({ dir: uDir, turn: "none" });
+      }
     }
 
-    if (possibleDirs.length === 1) {
-      return possibleDirs[0];
+    if (possibleOptions.length === 0) {
+      // True dead end - return lane direction (car will stop)
+      return { dir: laneDir, turn: "none" };
     }
 
-    // Multiple options - prefer straight (70%), else turn
-    if (possibleDirs.includes(laneDir) && Math.random() < 0.7) {
-      return laneDir;
+    if (possibleOptions.length === 1) {
+      return possibleOptions[0];
     }
 
-    return possibleDirs[Math.floor(Math.random() * possibleDirs.length)];
+    // Multiple options - prefer straight (70%), else pick randomly
+    const straightOption = possibleOptions.find(o => o.turn === "straight");
+    if (straightOption && Math.random() < 0.7) {
+      return straightOption;
+    }
+
+    return possibleOptions[Math.floor(Math.random() * possibleOptions.length)];
   }
 
   // Check if we can go in a direction from a lane

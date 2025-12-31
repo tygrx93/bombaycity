@@ -19,7 +19,12 @@ import {
   CHARACTER_SPEED,
   ROAD_LANE_SIZE,
 } from "../types";
-import { GRID_OFFSET_X, GRID_OFFSET_Y, WORLD_WIDTH, WORLD_HEIGHT } from "./gameConfig";
+import {
+  GRID_OFFSET_X,
+  GRID_OFFSET_Y,
+  WORLD_WIDTH,
+  WORLD_HEIGHT,
+} from "./gameConfig";
 import {
   getRoadLaneOrigin,
   hasRoadLane,
@@ -46,8 +51,15 @@ export interface SceneEvents {
   onTileHover: (x: number | null, y: number | null) => void;
   onTilesDrag?: (tiles: Array<{ x: number; y: number }>) => void;
   onEraserDrag?: (tiles: Array<{ x: number; y: number }>) => void;
-  onRoadLaneDrag?: (lanes: Array<{ x: number; y: number }>, direction: Direction, tileType: TileType) => void;
-  onTwoWayRoadDrag?: (lanes: Array<{ x: number; y: number }>, orientation: "horizontal" | "vertical") => void;
+  onRoadLaneDrag?: (
+    lanes: Array<{ x: number; y: number }>,
+    direction: Direction,
+    tileType: TileType
+  ) => void;
+  onTwoWayRoadDrag?: (
+    lanes: Array<{ x: number; y: number }>,
+    orientation: "horizontal" | "vertical"
+  ) => void;
 }
 
 // Generate unique ID
@@ -88,11 +100,15 @@ export class MainScene extends Phaser.Scene {
   // Sprite containers (buildings/entities on top of tilemap)
   private tileSprites: Map<string, Phaser.GameObjects.Image> = new Map(); // Legacy, will remove
   private buildingSprites: Map<string, Phaser.GameObjects.Image> = new Map();
-  private propOnBuildingSprites: Map<string, Phaser.GameObjects.Image> = new Map(); // Props on building tiles
+  private propOnBuildingSprites: Map<string, Phaser.GameObjects.Image> =
+    new Map(); // Props on building tiles
   private glowSprites: Map<string, Phaser.GameObjects.GameObject> = new Map();
   private carSprites: Map<string, Phaser.GameObjects.Sprite> = new Map();
   private characterSprites: Map<string, Phaser.GameObjects.Sprite> = new Map();
-  private previewSprites: (Phaser.GameObjects.Image | Phaser.GameObjects.Graphics)[] = [];
+  private previewSprites: (
+    | Phaser.GameObjects.Image
+    | Phaser.GameObjects.Graphics
+  )[] = [];
   private lotPreviewSprites: Phaser.GameObjects.Image[] = [];
 
   // Game state (owned by Phaser, not React)
@@ -220,7 +236,12 @@ export class MainScene extends Phaser.Scene {
     // Load car textures (new format: 1x1waymo_north.png)
     const newCarTypes = ["waymo", "robotaxi", "zoox"];
     const longDirs = ["north", "south", "east", "west"];
-    const dirMap: Record<string, string> = { north: "n", south: "s", east: "e", west: "w" };
+    const dirMap: Record<string, string> = {
+      north: "n",
+      south: "s",
+      east: "e",
+      west: "w",
+    };
     for (const car of newCarTypes) {
       for (const dir of longDirs) {
         this.load.image(`${car}_${dirMap[dir]}`, `/cars/1x1${car}_${dir}.png`);
@@ -252,15 +273,15 @@ export class MainScene extends Phaser.Scene {
         }
 
         // R key cycles road lane direction when any road lane tool is selected
-        if (key === "r" && (
-          this.selectedTool === ToolType.RoadLane ||
-          this.selectedTool === ToolType.RoadTurn
-        )) {
+        if (
+          key === "r" &&
+          (this.selectedTool === ToolType.RoadLane ||
+            this.selectedTool === ToolType.RoadTurn)
+        ) {
           this.roadLaneDirection = cycleDirection(this.roadLaneDirection);
           this.updatePreview();
           return;
         }
-
       });
 
       this.input.keyboard.on("keyup", (event: KeyboardEvent) => {
@@ -328,7 +349,6 @@ export class MainScene extends Phaser.Scene {
     this.tileData = Array.from({ length: GRID_HEIGHT }, () =>
       Array.from({ length: GRID_WIDTH }, () => TileIndex.Grass)
     );
-
   }
 
   // Generate tileset texture and create isometric tilemap
@@ -353,8 +373,14 @@ export class MainScene extends Phaser.Scene {
       const source = texture.getSourceImage() as HTMLImageElement;
       ctx.drawImage(
         source,
-        0, 0, source.width, source.height,
-        0, index * SUBTILE_HEIGHT, SUBTILE_WIDTH, SUBTILE_HEIGHT
+        0,
+        0,
+        source.width,
+        source.height,
+        0,
+        index * SUBTILE_HEIGHT,
+        SUBTILE_WIDTH,
+        SUBTILE_HEIGHT
       );
     };
 
@@ -377,7 +403,7 @@ export class MainScene extends Phaser.Scene {
     // Create a blank isometric tilemap
     // We need to construct it with the proper config for isometric
     const mapData = new Phaser.Tilemaps.MapData({
-      name: 'ground',
+      name: "ground",
       width: GRID_WIDTH,
       height: GRID_HEIGHT,
       tileWidth: SUBTILE_WIDTH,
@@ -492,7 +518,9 @@ export class MainScene extends Phaser.Scene {
     // Log every 60 frames (~1 second)
     this.statsLogCounter++;
     if (this.statsLogCounter >= 60) {
-      console.log(`[Stats] FPS: ${fps} | Characters: ${charCount} | Cars: ${carCount}`);
+      console.log(
+        `[Stats] FPS: ${fps} | Characters: ${charCount} | Cars: ${carCount}`
+      );
       this.statsLogCounter = 0;
     }
 
@@ -576,8 +604,12 @@ export class MainScene extends Phaser.Scene {
     }
 
     camera.setScroll(
-      Math.round(this.baseScrollX + (this.shakeAxis === "x" ? this.shakeOffset : 0)),
-      Math.round(this.baseScrollY + (this.shakeAxis === "y" ? this.shakeOffset : 0))
+      Math.round(
+        this.baseScrollX + (this.shakeAxis === "x" ? this.shakeOffset : 0)
+      ),
+      Math.round(
+        this.baseScrollY + (this.shakeAxis === "y" ? this.shakeOffset : 0)
+      )
     );
   }
 
@@ -752,7 +784,10 @@ export class MainScene extends Phaser.Scene {
   // Convert grid to screen using pure math formula for smooth sub-tile movement
   // This guarantees perfect 2:1 isometric ratios for moving entities (cars, characters)
   // Unlike gridToScreen, this doesn't use the tilemap which can cause jitter with fractional coords
-  private gridToScreenSmooth(gridX: number, gridY: number): { x: number; y: number } {
+  private gridToScreenSmooth(
+    gridX: number,
+    gridY: number
+  ): { x: number; y: number } {
     return {
       x: GRID_OFFSET_X + (gridX - gridY) * (SUBTILE_WIDTH / 2),
       y: GRID_OFFSET_Y + (gridX + gridY) * (SUBTILE_HEIGHT / 2),
@@ -762,7 +797,10 @@ export class MainScene extends Phaser.Scene {
   screenToGrid(screenX: number, screenY: number): { x: number; y: number } {
     if (this.groundMap) {
       // Offset Y down so cursor selects the tile it's visually "on" rather than "under"
-      const tilePoint = this.groundMap.worldToTileXY(screenX, screenY + SUBTILE_HEIGHT / 2);
+      const tilePoint = this.groundMap.worldToTileXY(
+        screenX,
+        screenY + SUBTILE_HEIGHT / 2
+      );
       if (tilePoint) {
         return { x: tilePoint.x, y: tilePoint.y };
       }
@@ -797,8 +835,12 @@ export class MainScene extends Phaser.Scene {
       this.baseScrollX = this.cameraStartX + dx;
       this.baseScrollY = this.cameraStartY + dy;
       camera.setScroll(
-        Math.round(this.baseScrollX + (this.shakeAxis === "x" ? this.shakeOffset : 0)),
-        Math.round(this.baseScrollY + (this.shakeAxis === "y" ? this.shakeOffset : 0))
+        Math.round(
+          this.baseScrollX + (this.shakeAxis === "x" ? this.shakeOffset : 0)
+        ),
+        Math.round(
+          this.baseScrollY + (this.shakeAxis === "y" ? this.shakeOffset : 0)
+        )
       );
       return;
     }
@@ -828,11 +870,12 @@ export class MainScene extends Phaser.Scene {
           this.dragTiles.add(`${tileX},${tileY}`);
         }
 
-        // If dragging with road lane tool, add lanes in straight line (snapped to 2x2 grid)
+        // If dragging with road lane tool (1-way or 2-way), add lanes in straight line (snapped to 2x2 grid)
         if (
           this.isDragging &&
           (this.selectedTool === ToolType.RoadLane ||
-           this.selectedTool === ToolType.RoadTurn) &&
+            this.selectedTool === ToolType.RoadTurn ||
+            this.selectedTool === ToolType.TwoWayRoad) &&
           this.dragStartTile
         ) {
           // Determine direction on first movement
@@ -853,6 +896,8 @@ export class MainScene extends Phaser.Scene {
           this.dragTiles.clear();
 
           // Constrain to the determined direction
+          const isTwoWay = this.selectedTool === ToolType.TwoWayRoad;
+
           if (this.dragDirection === "horizontal") {
             // Only add lanes along horizontal line
             const startX = Math.min(this.dragStartTile.x, tileX);
@@ -869,6 +914,10 @@ export class MainScene extends Phaser.Scene {
               laneX += ROAD_LANE_SIZE
             ) {
               this.dragTiles.add(`${laneX},${startLane.y}`);
+              // For 2-way roads, add parallel lane below
+              if (isTwoWay) {
+                this.dragTiles.add(`${laneX},${startLane.y + ROAD_LANE_SIZE}`);
+              }
             }
           } else if (this.dragDirection === "vertical") {
             // Only add lanes along vertical line
@@ -886,67 +935,14 @@ export class MainScene extends Phaser.Scene {
               laneY += ROAD_LANE_SIZE
             ) {
               this.dragTiles.add(`${startLane.x},${laneY}`);
+              // For 2-way roads, add parallel lane to the right
+              if (isTwoWay) {
+                this.dragTiles.add(`${startLane.x + ROAD_LANE_SIZE},${laneY}`);
+              }
             }
           }
 
           // Update preview after updating drag tiles
-          this.updatePreview();
-        }
-
-        // If dragging with 2-way road tool, add TWO parallel lanes (opposite directions)
-        if (
-          this.isDragging &&
-          this.selectedTool === ToolType.TwoWayRoad &&
-          this.dragStartTile
-        ) {
-          // Determine direction on first movement
-          if (this.dragDirection === null) {
-            const dx = Math.abs(tileX - this.dragStartTile.x);
-            const dy = Math.abs(tileY - this.dragStartTile.y);
-            if (dx > dy) {
-              this.dragDirection = "horizontal";
-            } else if (dy > dx) {
-              this.dragDirection = "vertical";
-            } else {
-              return;
-            }
-          }
-
-          // Clear and rebuild drag tiles
-          this.dragTiles.clear();
-
-          if (this.dragDirection === "horizontal") {
-            // E-W road: two parallel horizontal lanes
-            const startX = Math.min(this.dragStartTile.x, tileX);
-            const endX = Math.max(this.dragStartTile.x, tileX);
-            const baseLane = getRoadLaneOrigin(startX, this.dragStartTile.y);
-            const endLane = getRoadLaneOrigin(endX, this.dragStartTile.y);
-
-            const startLaneX = Math.min(baseLane.x, endLane.x);
-            const endLaneX = Math.max(baseLane.x, endLane.x);
-
-            // Add lanes for both rows (lane 1 at y, lane 2 at y + ROAD_LANE_SIZE)
-            for (let laneX = startLaneX; laneX <= endLaneX; laneX += ROAD_LANE_SIZE) {
-              this.dragTiles.add(`${laneX},${baseLane.y}`);
-              this.dragTiles.add(`${laneX},${baseLane.y + ROAD_LANE_SIZE}`);
-            }
-          } else if (this.dragDirection === "vertical") {
-            // N-S road: two parallel vertical lanes
-            const startY = Math.min(this.dragStartTile.y, tileY);
-            const endY = Math.max(this.dragStartTile.y, tileY);
-            const baseLane = getRoadLaneOrigin(this.dragStartTile.x, startY);
-            const endLane = getRoadLaneOrigin(this.dragStartTile.x, endY);
-
-            const startLaneY = Math.min(baseLane.y, endLane.y);
-            const endLaneY = Math.max(baseLane.y, endLane.y);
-
-            // Add lanes for both columns (lane 1 at x, lane 2 at x + ROAD_LANE_SIZE)
-            for (let laneY = startLaneY; laneY <= endLaneY; laneY += ROAD_LANE_SIZE) {
-              this.dragTiles.add(`${baseLane.x},${laneY}`);
-              this.dragTiles.add(`${baseLane.x + ROAD_LANE_SIZE},${laneY}`);
-            }
-          }
-
           this.updatePreview();
         }
 
@@ -1011,7 +1007,7 @@ export class MainScene extends Phaser.Scene {
             this.dragTiles.add(`${laneOrigin.x},${laneOrigin.y}`);
             // For 2-way roads, also add the parallel lane
             if (this.selectedTool === ToolType.TwoWayRoad) {
-              this.dragTiles.add(`${laneOrigin.x + ROAD_LANE_SIZE},${laneOrigin.y}`);
+              // Add parallel lane (below for horizontal default, right for vertical)
               this.dragTiles.add(`${laneOrigin.x},${laneOrigin.y + ROAD_LANE_SIZE}`);
             }
           } else {
@@ -1050,19 +1046,23 @@ export class MainScene extends Phaser.Scene {
           this.events_.onEraserDrag(tiles);
         } else if (
           (this.selectedTool === ToolType.RoadLane ||
-           this.selectedTool === ToolType.RoadTurn) &&
+            this.selectedTool === ToolType.RoadTurn) &&
           this.events_.onRoadLaneDrag
         ) {
           // Road lane drag - lanes are already in dragTiles with 2x2 origins
           // Map tool type to tile type
-          const tileType = this.selectedTool === ToolType.RoadTurn ? TileType.RoadTurn : TileType.RoadLane;
+          const tileType =
+            this.selectedTool === ToolType.RoadTurn
+              ? TileType.RoadTurn
+              : TileType.RoadLane;
           this.events_.onRoadLaneDrag(tiles, this.roadLaneDirection, tileType);
         } else if (
           this.selectedTool === ToolType.TwoWayRoad &&
-          this.events_.onTwoWayRoadDrag
+          this.events_.onTwoWayRoadDrag &&
+          this.dragDirection
         ) {
-          // 2-way road drag - pass tiles and direction to assign opposite lane directions
-          this.events_.onTwoWayRoadDrag(tiles, this.dragDirection || "horizontal");
+          // 2-way road drag - parallel lanes collected during drag
+          this.events_.onTwoWayRoadDrag(tiles, this.dragDirection);
         } else if (this.events_.onTilesDrag) {
           // Snow/Tile place immediately
           this.events_.onTilesDrag(tiles);
@@ -1103,7 +1103,10 @@ export class MainScene extends Phaser.Scene {
 
     // Accumulate wheel delta for discrete zoom levels
     const direction = deltaY > 0 ? 1 : -1;
-    if (this.lastWheelDirection !== 0 && this.lastWheelDirection !== direction) {
+    if (
+      this.lastWheelDirection !== 0 &&
+      this.lastWheelDirection !== direction
+    ) {
       this.wheelAccumulator = 0;
     }
     this.lastWheelDirection = direction;
@@ -1116,13 +1119,20 @@ export class MainScene extends Phaser.Scene {
     const currentZoom = camera.zoom;
     let currentIndex = MainScene.ZOOM_LEVELS.indexOf(currentZoom);
     if (currentIndex === -1) {
-      currentIndex = MainScene.ZOOM_LEVELS.reduce((closest, z, i) =>
-        Math.abs(z - currentZoom) < Math.abs(MainScene.ZOOM_LEVELS[closest] - currentZoom) ? i : closest, 0);
+      currentIndex = MainScene.ZOOM_LEVELS.reduce(
+        (closest, z, i) =>
+          Math.abs(z - currentZoom) <
+          Math.abs(MainScene.ZOOM_LEVELS[closest] - currentZoom)
+            ? i
+            : closest,
+        0
+      );
     }
 
-    const newIndex = direction > 0
-      ? Math.max(0, currentIndex - 1)
-      : Math.min(MainScene.ZOOM_LEVELS.length - 1, currentIndex + 1);
+    const newIndex =
+      direction > 0
+        ? Math.max(0, currentIndex - 1)
+        : Math.min(MainScene.ZOOM_LEVELS.length - 1, currentIndex + 1);
 
     const newZoom = MainScene.ZOOM_LEVELS[newIndex];
     if (newZoom === currentZoom) return;
@@ -1150,7 +1160,7 @@ export class MainScene extends Phaser.Scene {
     this.zoomLevel = newZoom;
     this.zoomHandledInternally = true;
 
-    this.events.emit('zoomChanged', newZoom);
+    this.events.emit("zoomChanged", newZoom);
   }
 
   setEventCallbacks(events: SceneEvents): void {
@@ -1323,8 +1333,6 @@ export class MainScene extends Phaser.Scene {
 
   // Car methods
   spawnCar(): boolean {
-    // Ensure TrafficManager has latest grid before spawning
-    this.trafficManager.setGrid(this.grid);
     return this.trafficManager.spawnCar();
   }
 
@@ -1433,8 +1441,12 @@ export class MainScene extends Phaser.Scene {
 
     // Get new world position and adjust scroll
     const newWorldPoint = camera.getWorldPoint(screenX, screenY);
-    camera.scrollX = Math.round(camera.scrollX - (newWorldPoint.x - worldPoint.x));
-    camera.scrollY = Math.round(camera.scrollY - (newWorldPoint.y - worldPoint.y));
+    camera.scrollX = Math.round(
+      camera.scrollX - (newWorldPoint.x - worldPoint.x)
+    );
+    camera.scrollY = Math.round(
+      camera.scrollY - (newWorldPoint.y - worldPoint.y)
+    );
 
     // Update baseScroll so update() loop doesn't reset it
     this.baseScrollX = camera.scrollX;
@@ -1535,8 +1547,8 @@ export class MainScene extends Phaser.Scene {
     for (let y = 0; y < GRID_HEIGHT; y += ROAD_LANE_SIZE) {
       for (let x = 0; x < GRID_WIDTH; x += ROAD_LANE_SIZE) {
         const cell = this.grid[y]?.[x];
-        const isRoadLane = cell?.type === TileType.RoadLane ||
-                          cell?.type === TileType.RoadTurn;
+        const isRoadLane =
+          cell?.type === TileType.RoadLane || cell?.type === TileType.RoadTurn;
         if (isRoadLane && cell?.isOrigin && cell?.laneDirection) {
           // Get center of 2x2 lane in screen coords
           const centerX = x + ROAD_LANE_SIZE / 2;
@@ -1604,7 +1616,10 @@ export class MainScene extends Phaser.Scene {
             graphics.strokePath();
 
             // Draw turn arrowhead
-            const turnAngle = Math.atan2(turnEndY - turnStartY, turnEndX - turnStartX);
+            const turnAngle = Math.atan2(
+              turnEndY - turnStartY,
+              turnEndX - turnStartX
+            );
             graphics.fillStyle(0x00ff00, 0.8);
             graphics.beginPath();
             graphics.moveTo(turnEndX, turnEndY);
@@ -1711,7 +1726,7 @@ export class MainScene extends Phaser.Scene {
       return TileIndex.AsphaltTL + getQuadrant();
     } else if (cell.type === TileType.Snow) {
       // Non-quadrant, but with variants
-      const variant = ((x * 7 + y * 13) % 3);
+      const variant = (x * 7 + y * 13) % 3;
       return TileIndex.Snow1 + variant;
     } else if (cell.type === TileType.Building) {
       // For buildings, check if it preserves underlying tile
@@ -1720,13 +1735,15 @@ export class MainScene extends Phaser.Scene {
         const preservesTile =
           building && (building.category === "props" || building.isDecoration);
         if (preservesTile && cell.underlyingTileType) {
-          if (cell.underlyingTileType === TileType.Tile ||
-              cell.underlyingTileType === TileType.Sidewalk) {
+          if (
+            cell.underlyingTileType === TileType.Tile ||
+            cell.underlyingTileType === TileType.Sidewalk
+          ) {
             return TileIndex.RoadTL + getQuadrant();
           } else if (cell.underlyingTileType === TileType.Asphalt) {
             return TileIndex.AsphaltTL + getQuadrant();
           } else if (cell.underlyingTileType === TileType.Snow) {
-            const variant = ((x * 7 + y * 13) % 3);
+            const variant = (x * 7 + y * 13) % 3;
             return TileIndex.Snow1 + variant;
           }
         } else if (!preservesTile) {
@@ -1919,7 +1936,8 @@ export class MainScene extends Phaser.Scene {
     const balancedFrontX = frontX + extendX;
     const balancedFrontY = frontY + extendY;
     const balancedGridSum = balancedFrontX + balancedFrontY;
-    const balancedScreenY = GRID_OFFSET_Y + (balancedGridSum * SUBTILE_HEIGHT) / 2;
+    const balancedScreenY =
+      GRID_OFFSET_Y + (balancedGridSum * SUBTILE_HEIGHT) / 2;
     const decorationDepth = this.depthFromSortPoint(
       screenPos.x,
       balancedScreenY + SUBTILE_HEIGHT / 2,
@@ -1962,7 +1980,7 @@ export class MainScene extends Phaser.Scene {
     // This allows characters to correctly interleave with building parts.
     // ========================================================================
 
-    const SLICE_WIDTH = SUBTILE_WIDTH / 2; // Half subtile width - isometric diagonal offset for subtile grid
+    const SLICE_WIDTH = SUBTILE_WIDTH / 2; // Half tile width - isometric diagonal offset (64/2)
     const SPRITE_CENTER = 256; // Front corner X in sprite space
     const SPRITE_HEIGHT = 512;
 
@@ -1991,7 +2009,8 @@ export class MainScene extends Phaser.Scene {
         // Frontmost tile in this column is at (frontX - i, frontY)
         // gridSum = (frontX - i) + frontY
         const sliceGridSum = frontX - i + frontY;
-        const sliceScreenY = GRID_OFFSET_Y + (sliceGridSum * SUBTILE_HEIGHT) / 2;
+        const sliceScreenY =
+          GRID_OFFSET_Y + (sliceGridSum * SUBTILE_HEIGHT) / 2;
         slice.setDepth(
           this.depthFromSortPoint(
             screenPos.x,
@@ -2032,7 +2051,8 @@ export class MainScene extends Phaser.Scene {
         // Frontmost tile in this row is at (frontX, frontY - i)
         // gridSum = frontX + (frontY - i)
         const sliceGridSum = frontX + frontY - i;
-        const sliceScreenY = GRID_OFFSET_Y + (sliceGridSum * SUBTILE_HEIGHT) / 2;
+        const sliceScreenY =
+          GRID_OFFSET_Y + (sliceGridSum * SUBTILE_HEIGHT) / 2;
         slice.setDepth(
           this.depthFromSortPoint(
             screenPos.x,
@@ -2264,12 +2284,25 @@ export class MainScene extends Phaser.Scene {
     const arrowHeadSize = 5;
 
     // Direction vectors
-    let dx = 0, dy = 0;
+    let dx = 0,
+      dy = 0;
     switch (direction) {
-      case Direction.Right: dx = 1; dy = 0.5; break;  // Isometric right (SE)
-      case Direction.Left: dx = -1; dy = -0.5; break; // Isometric left (NW)
-      case Direction.Down: dx = -1; dy = 0.5; break;  // Isometric down (SW)
-      case Direction.Up: dx = 1; dy = -0.5; break;    // Isometric up (NE)
+      case Direction.Right:
+        dx = 1;
+        dy = 0.5;
+        break; // Isometric right (SE)
+      case Direction.Left:
+        dx = -1;
+        dy = -0.5;
+        break; // Isometric left (NW)
+      case Direction.Down:
+        dx = -1;
+        dy = 0.5;
+        break; // Isometric down (SW)
+      case Direction.Up:
+        dx = 1;
+        dy = -0.5;
+        break; // Isometric up (NE)
     }
 
     // Normalize and scale
@@ -2356,12 +2389,21 @@ export class MainScene extends Phaser.Scene {
             const py = laneOrigin.y + dy;
             if (px < GRID_WIDTH && py < GRID_HEIGHT) {
               const screenPos = this.gridToScreen(px, py);
-              const preview = this.add.image(screenPos.x, screenPos.y, "asphalt");
+              const preview = this.add.image(
+                screenPos.x,
+                screenPos.y,
+                "asphalt"
+              );
               preview.setOrigin(0.5, 0);
-              preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
+              preview.setScale(
+                SUBTILE_WIDTH / preview.width,
+                SUBTILE_HEIGHT / preview.height
+              );
               preview.setAlpha(hasCollision ? 0.3 : 0.7);
               if (hasCollision) preview.setTint(0xff0000);
-              preview.setDepth(this.depthFromSortPoint(screenPos.x, screenPos.y, 1_000_000));
+              preview.setDepth(
+                this.depthFromSortPoint(screenPos.x, screenPos.y, 1_000_000)
+              );
               this.previewSprites.push(preview);
             }
           }
@@ -2394,7 +2436,7 @@ export class MainScene extends Phaser.Scene {
         }
       }
     } else if (this.selectedTool === ToolType.TwoWayRoad) {
-      // Get lanes to preview for 2-way road
+      // Get lanes to preview - either drag set or just hover lane
       const lanesToPreview: Array<{ x: number; y: number }> = [];
       if (this.isDragging && this.dragTiles.size > 0) {
         this.dragTiles.forEach((key) => {
@@ -2402,17 +2444,18 @@ export class MainScene extends Phaser.Scene {
           lanesToPreview.push({ x: laneX, y: laneY });
         });
       } else if (x >= 0 && x < GRID_WIDTH && y >= 0 && y < GRID_HEIGHT) {
-        // Single hover - just show the single lane origin (like RoadLane tool)
-        // Parallel lane only appears once dragging starts
+        // Single hover - show preview for hovered lane pair (2 parallel lanes)
         const laneOrigin = getRoadLaneOrigin(x, y);
         lanesToPreview.push({ x: laneOrigin.x, y: laneOrigin.y });
+        // Add parallel lane (below for horizontal start, right for vertical start)
+        lanesToPreview.push({ x: laneOrigin.x, y: laneOrigin.y + ROAD_LANE_SIZE });
       }
 
-      // Check if ANY lane in the road lot has a collision - whole preview turns red
-      const anyCollision = lanesToPreview.some(lane => !canPlaceRoadLane(this.grid, lane.x, lane.y).valid);
-
+      // Draw lanes
       for (const lane of lanesToPreview) {
-        // Draw 2x2 asphalt tiles for this lane
+        const placementCheck = canPlaceRoadLane(this.grid, lane.x, lane.y);
+        const hasCollision = !placementCheck.valid;
+
         for (let dy = 0; dy < ROAD_LANE_SIZE; dy++) {
           for (let dx = 0; dx < ROAD_LANE_SIZE; dx++) {
             const px = lane.x + dx;
@@ -2422,35 +2465,71 @@ export class MainScene extends Phaser.Scene {
               const preview = this.add.image(screenPos.x, screenPos.y, "asphalt");
               preview.setOrigin(0.5, 0);
               preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
-              preview.setAlpha(anyCollision ? 0.3 : 0.6);
-              if (anyCollision) preview.setTint(0xff0000);
+              preview.setAlpha(hasCollision ? 0.3 : 0.7);
+              if (hasCollision) preview.setTint(0xff0000);
               preview.setDepth(this.depthFromSortPoint(screenPos.x, screenPos.y, 1_000_000));
               this.previewSprites.push(preview);
             }
           }
         }
+      }
 
-        // Draw direction arrow
-        const centerX = lane.x + ROAD_LANE_SIZE / 2;
-        const centerY = lane.y + ROAD_LANE_SIZE / 2;
-        const centerScreen = this.gridToScreen(centerX, centerY);
+      // Draw sidewalk previews on outer edges
+      if (lanesToPreview.length > 0) {
+        // Determine orientation from drag or assume vertical for hover
+        const orientation = this.dragDirection || "vertical";
+        const sidewalkTiles: Array<{ x: number; y: number }> = [];
 
-        // Show bi-directional arrows for hover, actual direction during drag
-        if (this.isDragging && this.dragDirection) {
-          // Determine which lane this is based on drag direction
-          let arrowDir: Direction;
-          if (this.dragDirection === "horizontal") {
-            const hasLaneBelow = lanesToPreview.some(l => l.x === lane.x && l.y === lane.y + ROAD_LANE_SIZE);
-            arrowDir = hasLaneBelow ? Direction.Right : Direction.Left;
-          } else {
-            const hasLaneRight = lanesToPreview.some(l => l.y === lane.y && l.x === lane.x + ROAD_LANE_SIZE);
-            arrowDir = hasLaneRight ? Direction.Down : Direction.Up;
+        if (orientation === "horizontal") {
+          const lanesByX = new Map<number, number[]>();
+          for (const lane of lanesToPreview) {
+            if (!lanesByX.has(lane.x)) lanesByX.set(lane.x, []);
+            lanesByX.get(lane.x)!.push(lane.y);
           }
-          this.drawDirectionArrow(centerScreen.x, centerScreen.y, arrowDir, anyCollision ? 0xff0000 : 0x00ff00, anyCollision ? 0.5 : 0.9);
+          for (const [lx, ys] of lanesByX) {
+            const minY = Math.min(...ys);
+            const maxY = Math.max(...ys);
+            // 2x2 sidewalk blocks above and below
+            for (let sy = 0; sy < ROAD_LANE_SIZE; sy++) {
+              for (let dx = 0; dx < ROAD_LANE_SIZE; dx++) {
+                sidewalkTiles.push({ x: lx + dx, y: minY - ROAD_LANE_SIZE + sy });
+                sidewalkTiles.push({ x: lx + dx, y: maxY + ROAD_LANE_SIZE + sy });
+              }
+            }
+          }
         } else {
-          // Hover - show both directions
-          this.drawDirectionArrow(centerScreen.x, centerScreen.y, Direction.Right, anyCollision ? 0xff0000 : 0x00ff00, 0.5);
-          this.drawDirectionArrow(centerScreen.x, centerScreen.y, Direction.Left, anyCollision ? 0xff0000 : 0x00ff00, 0.5);
+          const lanesByY = new Map<number, number[]>();
+          for (const lane of lanesToPreview) {
+            if (!lanesByY.has(lane.y)) lanesByY.set(lane.y, []);
+            lanesByY.get(lane.y)!.push(lane.x);
+          }
+          for (const [ly, xs] of lanesByY) {
+            const minX = Math.min(...xs);
+            const maxX = Math.max(...xs);
+            // 2x2 sidewalk blocks left and right
+            for (let sx = 0; sx < ROAD_LANE_SIZE; sx++) {
+              for (let dy = 0; dy < ROAD_LANE_SIZE; dy++) {
+                sidewalkTiles.push({ x: minX - ROAD_LANE_SIZE + sx, y: ly + dy });
+                sidewalkTiles.push({ x: maxX + ROAD_LANE_SIZE + sx, y: ly + dy });
+              }
+            }
+          }
+        }
+
+        // Draw sidewalk previews
+        for (const tile of sidewalkTiles) {
+          if (tile.x >= 0 && tile.x < GRID_WIDTH && tile.y >= 0 && tile.y < GRID_HEIGHT) {
+            const cell = this.grid[tile.y]?.[tile.x];
+            const hasCollision = cell?.type !== TileType.Grass;
+            const screenPos = this.gridToScreen(tile.x, tile.y);
+            const preview = this.add.image(screenPos.x, screenPos.y, "road");
+            preview.setOrigin(0.5, 0);
+            preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
+            preview.setAlpha(hasCollision ? 0.2 : 0.5);
+            if (hasCollision) preview.setTint(0xff0000);
+            preview.setDepth(this.depthFromSortPoint(screenPos.x, screenPos.y, 1_000_000));
+            this.previewSprites.push(preview);
+          }
         }
       }
     } else if (this.selectedTool === ToolType.Tile) {
@@ -2490,7 +2569,10 @@ export class MainScene extends Phaser.Scene {
           const preview = this.add.image(screenPos.x, screenPos.y, "road");
           preview.setOrigin(0.5, 0);
           // Scale to fit subtile size (handles different source sizes)
-          preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
+          preview.setScale(
+            SUBTILE_WIDTH / preview.width,
+            SUBTILE_HEIGHT / preview.height
+          );
           preview.setAlpha(hasCollision ? 0.3 : 0.7);
           if (hasCollision) preview.setTint(0xff0000);
           preview.setDepth(
@@ -2536,7 +2618,10 @@ export class MainScene extends Phaser.Scene {
           const screenPos = this.gridToScreen(tx, ty);
           const preview = this.add.image(screenPos.x, screenPos.y, "asphalt");
           preview.setOrigin(0.5, 0);
-          preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
+          preview.setScale(
+            SUBTILE_WIDTH / preview.width,
+            SUBTILE_HEIGHT / preview.height
+          );
           preview.setAlpha(hasCollision ? 0.3 : 0.7);
           if (hasCollision) preview.setTint(0xff0000);
           preview.setDepth(
@@ -2585,7 +2670,10 @@ export class MainScene extends Phaser.Scene {
             getSnowTextureKey(tx, ty)
           );
           preview.setOrigin(0.5, 0);
-          preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
+          preview.setScale(
+            SUBTILE_WIDTH / preview.width,
+            SUBTILE_HEIGHT / preview.height
+          );
           preview.setAlpha(hasCollision ? 0.3 : 0.7);
           if (hasCollision) preview.setTint(0xff0000);
           preview.setDepth(
@@ -2663,7 +2751,10 @@ export class MainScene extends Phaser.Scene {
               const screenPos = this.gridToScreen(tileX, tileY);
               const lotTile = this.add.image(screenPos.x, screenPos.y, "road");
               lotTile.setOrigin(0.5, 0);
-              lotTile.setScale(SUBTILE_WIDTH / lotTile.width, SUBTILE_HEIGHT / lotTile.height);
+              lotTile.setScale(
+                SUBTILE_WIDTH / lotTile.width,
+                SUBTILE_HEIGHT / lotTile.height
+              );
               lotTile.setAlpha(footprintCollision ? 0.3 : 0.5);
               if (footprintCollision) lotTile.setTint(0xff0000);
               lotTile.setDepth(
@@ -2736,7 +2827,10 @@ export class MainScene extends Phaser.Scene {
             const screenPos = this.gridToScreen(tx, ty);
             const preview = this.add.image(screenPos.x, screenPos.y, "grass");
             preview.setOrigin(0.5, 0);
-            preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
+            preview.setScale(
+              SUBTILE_WIDTH / preview.width,
+              SUBTILE_HEIGHT / preview.height
+            );
             preview.setAlpha(0.3);
             preview.setTint(0xff0000);
             preview.setDepth(
@@ -2750,16 +2844,16 @@ export class MainScene extends Phaser.Scene {
           const originY = cell.originY ?? ty;
           const cellType = cell.type;
 
-          // Check if this is a road tile (lane or turn)
-          const isRoadTile =
-            cellType === TileType.RoadLane || cellType === TileType.RoadTurn;
+          // Check if this is a road lane
+          const isRoadLane =
+            originX % ROAD_LANE_SIZE === 0 &&
+            originY % ROAD_LANE_SIZE === 0 &&
+            cellType === TileType.RoadLane;
 
-          if (isRoadTile) {
-            // Show entire road lot - scan 4x4 area for all cells sharing same origin
-            // This handles both 1-way (2x2) and 2-way roads (4x2 or 2x4)
-            const ROAD_LOT_MAX = ROAD_LANE_SIZE * 2; // 4 subtiles max
-            for (let dy = 0; dy < ROAD_LOT_MAX; dy++) {
-              for (let dx = 0; dx < ROAD_LOT_MAX; dx++) {
+          if (isRoadLane) {
+            // Show entire road lane (2x2)
+            for (let dy = 0; dy < ROAD_LANE_SIZE; dy++) {
+              for (let dx = 0; dx < ROAD_LANE_SIZE; dx++) {
                 const px = originX + dx;
                 const py = originY + dy;
                 if (
@@ -2767,13 +2861,9 @@ export class MainScene extends Phaser.Scene {
                   py < GRID_HEIGHT &&
                   !previewedTiles.has(`${px},${py}`)
                 ) {
+                  previewedTiles.add(`${px},${py}`);
                   const tileCell = this.grid[py]?.[px];
-                  // Only show if this cell points to the same origin
-                  if (tileCell &&
-                      tileCell.originX === originX &&
-                      tileCell.originY === originY &&
-                      (tileCell.type === TileType.RoadLane || tileCell.type === TileType.RoadTurn)) {
-                    previewedTiles.add(`${px},${py}`);
+                  if (tileCell && tileCell.type !== TileType.Grass) {
                     const screenPos = this.gridToScreen(px, py);
                     const preview = this.add.image(
                       screenPos.x,
@@ -2781,7 +2871,10 @@ export class MainScene extends Phaser.Scene {
                       "asphalt"
                     );
                     preview.setOrigin(0.5, 0);
-                    preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
+                    preview.setScale(
+                      SUBTILE_WIDTH / preview.width,
+                      SUBTILE_HEIGHT / preview.height
+                    );
                     preview.setAlpha(0.7);
                     preview.setTint(0xff0000);
                     preview.setDepth(
@@ -2823,7 +2916,10 @@ export class MainScene extends Phaser.Scene {
                       "road"
                     );
                     preview.setOrigin(0.5, 0);
-                    preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
+                    preview.setScale(
+                      SUBTILE_WIDTH / preview.width,
+                      SUBTILE_HEIGHT / preview.height
+                    );
                     preview.setAlpha(0.7);
                     preview.setTint(0xff0000);
                     preview.setDepth(
@@ -2871,7 +2967,10 @@ export class MainScene extends Phaser.Scene {
               const screenPos = this.gridToScreen(tx, ty);
               let textureKey = "grass";
               if (cellType === TileType.Asphalt) textureKey = "asphalt";
-              else if (cellType === TileType.Sidewalk || cellType === TileType.Tile)
+              else if (
+                cellType === TileType.Sidewalk ||
+                cellType === TileType.Tile
+              )
                 textureKey = "road";
               else if (cellType === TileType.Snow)
                 textureKey = getSnowTextureKey(tx, ty);
@@ -2881,7 +2980,10 @@ export class MainScene extends Phaser.Scene {
                 textureKey
               );
               preview.setOrigin(0.5, 0);
-              preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
+              preview.setScale(
+                SUBTILE_WIDTH / preview.width,
+                SUBTILE_HEIGHT / preview.height
+              );
               preview.setAlpha(0.7);
               preview.setTint(0xff0000);
               preview.setDepth(

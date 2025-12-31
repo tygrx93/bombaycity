@@ -14,7 +14,7 @@ export enum ToolType {
   None = "none",
   RoadLane = "roadLane", // 2x2 lane placement with direction (1-way)
   RoadTurn = "roadTurn", // 2x2 lane: straight or right turn (rotate for all directions)
-  TwoWayRoad = "twoWayRoad", // 4-wide road with 2 parallel lanes (opposite directions)
+  TwoWayRoad = "twoWayRoad", // Two parallel lanes with opposite directions
   Asphalt = "asphalt", // Plain asphalt (decorative)
   Sidewalk = "sidewalk", // Pedestrian walkway
   Tile = "tile",
@@ -83,6 +83,8 @@ export enum CarType {
   Zoox = "zoox",
 }
 
+export type TurnType = "left" | "right" | "straight" | "none";
+
 export interface Car {
   id: string;
   x: number;
@@ -91,6 +93,7 @@ export interface Car {
   speed: number;
   waiting: number;
   carType: CarType;
+  lastTurn?: TurnType;  // Prevent consecutive same-direction turns
 }
 
 // Grid hierarchy (SC4/RCT style):
