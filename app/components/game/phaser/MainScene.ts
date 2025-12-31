@@ -11,6 +11,8 @@ import {
   GRID_HEIGHT,
   SUBTILE_WIDTH,
   SUBTILE_HEIGHT,
+  TILE_WIDTH,
+  TILE_HEIGHT,
   TileIndex,
   QUADRANT_TILES,
   ToolType,
@@ -1145,7 +1147,17 @@ export class MainScene extends Phaser.Scene {
   // ============================================
 
   // Convert subtile grid coordinates to isometric screen position
+  // Use tilemap's tileToWorldXY for perfect alignment with tilemap tiles
   gridToScreen(gridX: number, gridY: number): { x: number; y: number } {
+    if (this.groundMap) {
+      const worldPoint = this.groundMap.tileToWorldXY(gridX, gridY);
+      if (worldPoint) {
+        // tileToWorldXY returns top-left of bounding box
+        // Add half tile width to get the top corner of the diamond
+        return { x: worldPoint.x + SUBTILE_WIDTH / 2, y: worldPoint.y };
+      }
+    }
+    // Fallback if tilemap not ready
     return {
       x: GRID_OFFSET_X + (gridX - gridY) * (SUBTILE_WIDTH / 2),
       y: GRID_OFFSET_Y + (gridX + gridY) * (SUBTILE_HEIGHT / 2),
@@ -1153,6 +1165,13 @@ export class MainScene extends Phaser.Scene {
   }
 
   screenToGrid(screenX: number, screenY: number): { x: number; y: number } {
+    if (this.groundMap) {
+      const tilePoint = this.groundMap.worldToTileXY(screenX, screenY);
+      if (tilePoint) {
+        return { x: tilePoint.x, y: tilePoint.y };
+      }
+    }
+    // Fallback if tilemap not ready
     const relX = screenX - GRID_OFFSET_X;
     const relY = screenY - GRID_OFFSET_Y;
 
@@ -2022,13 +2041,17 @@ export class MainScene extends Phaser.Scene {
       return;
     }
 
-    // Get footprint based on orientation (for positioning)
+    // Get footprint based on orientation (in subtile units)
     const footprint = getBuildingFootprint(building, orientation);
+
     // Get render size for slicing (use renderSize if available, else footprint)
     const renderSize = building.renderSize || footprint;
+    // Front corner is at the SE corner of the footprint
     const frontX = originX + footprint.width - 1;
     const frontY = originY + footprint.height - 1;
     const screenPos = this.gridToScreen(frontX, frontY);
+    // Building sprites have anchor at (256, 512) - bottom of 512x512 sprite
+    // Bottom of the front tile diamond is screenPos.y + SUBTILE_HEIGHT
     const bottomY = screenPos.y + SUBTILE_HEIGHT;
 
     // Calculate tint for props (needed for each slice)
@@ -2505,6 +2528,7 @@ export class MainScene extends Phaser.Scene {
               textureKey
             );
             preview.setOrigin(0.5, 0);
+            preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
             preview.setAlpha(segmentHasCollision ? 0.3 : 0.7);
             if (segmentHasCollision) preview.setTint(0xff0000);
             preview.setDepth(
@@ -2550,6 +2574,8 @@ export class MainScene extends Phaser.Scene {
           const screenPos = this.gridToScreen(tx, ty);
           const preview = this.add.image(screenPos.x, screenPos.y, "road");
           preview.setOrigin(0.5, 0);
+          // Scale to fit subtile size (handles different source sizes)
+          preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
           preview.setAlpha(hasCollision ? 0.3 : 0.7);
           if (hasCollision) preview.setTint(0xff0000);
           preview.setDepth(
@@ -2595,6 +2621,7 @@ export class MainScene extends Phaser.Scene {
           const screenPos = this.gridToScreen(tx, ty);
           const preview = this.add.image(screenPos.x, screenPos.y, "asphalt");
           preview.setOrigin(0.5, 0);
+          preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
           preview.setAlpha(hasCollision ? 0.3 : 0.7);
           if (hasCollision) preview.setTint(0xff0000);
           preview.setDepth(
@@ -2643,7 +2670,7 @@ export class MainScene extends Phaser.Scene {
             getSnowTextureKey(tx, ty)
           );
           preview.setOrigin(0.5, 0);
-          // Native resolution - no scaling (assets should be 64x32)
+          preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
           preview.setAlpha(hasCollision ? 0.3 : 0.7);
           if (hasCollision) preview.setTint(0xff0000);
           preview.setDepth(
@@ -2721,6 +2748,7 @@ export class MainScene extends Phaser.Scene {
               const screenPos = this.gridToScreen(tileX, tileY);
               const lotTile = this.add.image(screenPos.x, screenPos.y, "road");
               lotTile.setOrigin(0.5, 0);
+              lotTile.setScale(SUBTILE_WIDTH / lotTile.width, SUBTILE_HEIGHT / lotTile.height);
               lotTile.setAlpha(footprintCollision ? 0.3 : 0.5);
               if (footprintCollision) lotTile.setTint(0xff0000);
               lotTile.setDepth(
@@ -2793,6 +2821,7 @@ export class MainScene extends Phaser.Scene {
             const screenPos = this.gridToScreen(tx, ty);
             const preview = this.add.image(screenPos.x, screenPos.y, "grass");
             preview.setOrigin(0.5, 0);
+            preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
             preview.setAlpha(0.3);
             preview.setTint(0xff0000);
             preview.setDepth(
@@ -2835,6 +2864,7 @@ export class MainScene extends Phaser.Scene {
                       textureKey
                     );
                     preview.setOrigin(0.5, 0);
+                    preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
                     preview.setAlpha(0.7);
                     preview.setTint(0xff0000);
                     preview.setDepth(
@@ -2876,6 +2906,7 @@ export class MainScene extends Phaser.Scene {
                       "road"
                     );
                     preview.setOrigin(0.5, 0);
+                    preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
                     preview.setAlpha(0.7);
                     preview.setTint(0xff0000);
                     preview.setDepth(
@@ -2933,7 +2964,7 @@ export class MainScene extends Phaser.Scene {
                 textureKey
               );
               preview.setOrigin(0.5, 0);
-              // Native resolution - no scaling (assets should be 64x32)
+              preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
               preview.setAlpha(0.7);
               preview.setTint(0xff0000);
               preview.setDepth(

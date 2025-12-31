@@ -36,6 +36,7 @@ export interface BuildingDefinition {
 }
 
 // Helper to get the correct footprint for a building based on orientation
+// Returns footprint in SUBTILE units (32x16 pixels) - same as definition values
 export function getBuildingFootprint(
   building: BuildingDefinition,
   orientation?: string
