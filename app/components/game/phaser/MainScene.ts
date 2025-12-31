@@ -3,10 +3,10 @@ import {
   GridCell,
   Character,
   Car,
+  CarType,
   TileType,
   Direction,
   CharacterType,
-  CarType,
   GRID_WIDTH,
   GRID_HEIGHT,
   SUBTILE_WIDTH,
@@ -17,21 +17,19 @@ import {
   QUADRANT_TILES,
   ToolType,
   CHARACTER_SPEED,
-  CAR_SPEED,
+  ROAD_LANE_SIZE,
 } from "../types";
 import { GRID_OFFSET_X, GRID_OFFSET_Y, WORLD_WIDTH, WORLD_HEIGHT } from "./gameConfig";
 import {
-  ROAD_SEGMENT_SIZE,
-  getRoadSegmentOrigin,
-  hasRoadSegment,
-  getRoadConnections,
-  getSegmentType,
-  generateRoadPattern,
-  canPlaceRoadSegment,
-  getLaneDirection,
-  isAtIntersection,
-  canTurnAtTile,
-  getUTurnDirection,
+  getRoadLaneOrigin,
+  hasRoadLane,
+  canPlaceRoadLane,
+  getDirectionAngle,
+  cycleDirection,
+  directionVectors as roadDirectionVectors,
+  oppositeDirection,
+  rightTurnDirection,
+  isRoadTileType,
 } from "../roadUtils";
 import {
   BUILDINGS,
@@ -47,7 +45,7 @@ export interface SceneEvents {
   onTileHover: (x: number | null, y: number | null) => void;
   onTilesDrag?: (tiles: Array<{ x: number; y: number }>) => void;
   onEraserDrag?: (tiles: Array<{ x: number; y: number }>) => void;
-  onRoadDrag?: (segments: Array<{ x: number; y: number }>) => void;
+  onRoadLaneDrag?: (lanes: Array<{ x: number; y: number }>, direction: Direction, tileType: TileType) => void;
 }
 
 // Generate unique ID
@@ -59,14 +57,6 @@ const directionVectors: Record<Direction, { dx: number; dy: number }> = {
   [Direction.Down]: { dx: 0, dy: 1 },
   [Direction.Left]: { dx: -1, dy: 0 },
   [Direction.Right]: { dx: 1, dy: 0 },
-};
-
-// Opposite directions
-const oppositeDirection: Record<Direction, Direction> = {
-  [Direction.Up]: Direction.Down,
-  [Direction.Down]: Direction.Up,
-  [Direction.Left]: Direction.Right,
-  [Direction.Right]: Direction.Left,
 };
 
 // All directions as array
@@ -96,24 +86,22 @@ export class MainScene extends Phaser.Scene {
   // Sprite containers (buildings/entities on top of tilemap)
   private tileSprites: Map<string, Phaser.GameObjects.Image> = new Map(); // Legacy, will remove
   private buildingSprites: Map<string, Phaser.GameObjects.Image> = new Map();
+  private propOnBuildingSprites: Map<string, Phaser.GameObjects.Image> = new Map(); // Props on building tiles
   private glowSprites: Map<string, Phaser.GameObjects.GameObject> = new Map();
   private carSprites: Map<string, Phaser.GameObjects.Sprite> = new Map();
   private characterSprites: Map<string, Phaser.GameObjects.Sprite> = new Map();
-  private previewSprites: Phaser.GameObjects.Image[] = [];
+  private previewSprites: (Phaser.GameObjects.Image | Phaser.GameObjects.Graphics)[] = [];
   private lotPreviewSprites: Phaser.GameObjects.Image[] = [];
 
   // Game state (owned by Phaser, not React)
   private grid: GridCell[][] = [];
   private characters: Character[] = [];
-  private cars: Car[] = [];
-
-  // Reusable array for combined cars (avoids GC pressure from spreading every frame)
-  private allCarsCache: Car[] = [];
 
   // Tool state (synced from React)
-  private selectedTool: ToolType = ToolType.RoadNetwork;
+  private selectedTool: ToolType = ToolType.RoadLane;
   private selectedBuildingId: string | null = null;
   private buildingOrientation: Direction = Direction.Down;
+  private roadLaneDirection: Direction = Direction.Right; // Default direction for road lanes
   private hoverTile: { x: number; y: number } | null = null;
 
   // Event callbacks
@@ -137,9 +125,15 @@ export class MainScene extends Phaser.Scene {
   private showPaths: boolean = false;
   private pathOverlaySprites: Phaser.GameObjects.Graphics | null = null;
 
-  // Driving mode state
-  private isPlayerDriving: boolean = false;
-  private playerCar: Car | null = null;
+  // Debug: show entity tile positions
+  private showEntityTiles: boolean = false;
+  private entityTileGraphics: Phaser.GameObjects.Graphics | null = null;
+
+  // Debug: show road lane directions (always on for now during development)
+  private showRoadLaneArrows: boolean = true;
+  private roadLaneArrowGraphics: Phaser.GameObjects.Graphics | null = null;
+
+  // Driving mode - keyboard input tracking
   private pressedKeys: Set<string> = new Set();
 
   // Keyboard controls
@@ -244,23 +238,26 @@ export class MainScene extends Phaser.Scene {
 
       // Set up driving controls
       this.input.keyboard.on("keydown", (event: KeyboardEvent) => {
-        if (this.isPlayerDriving) {
-          const key = event.key.toLowerCase();
-          if (
-            [
-              "arrowup",
-              "arrowdown",
-              "arrowleft",
-              "arrowright",
-              "w",
-              "a",
-              "s",
-              "d",
-            ].includes(key)
-          ) {
-            this.pressedKeys.add(key);
-          }
+        const key = event.key.toLowerCase();
+
+        // P key toggles debug path overlay
+        if (key === "p") {
+          this.showPaths = !this.showPaths;
+          console.log("[Debug] Path overlay:", this.showPaths ? "ON" : "OFF");
+          this.renderPathOverlay();
+          return;
         }
+
+        // R key cycles road lane direction when any road lane tool is selected
+        if (key === "r" && (
+          this.selectedTool === ToolType.RoadLane ||
+          this.selectedTool === ToolType.RoadTurn
+        )) {
+          this.roadLaneDirection = cycleDirection(this.roadLaneDirection);
+          this.updatePreview();
+          return;
+        }
+
       });
 
       this.input.keyboard.on("keyup", (event: KeyboardEvent) => {
@@ -328,6 +325,7 @@ export class MainScene extends Phaser.Scene {
     this.tileData = Array.from({ length: GRID_HEIGHT }, () =>
       Array.from({ length: GRID_WIDTH }, () => TileIndex.Grass)
     );
+
   }
 
   // Generate tileset texture and create isometric tilemap
@@ -457,8 +455,6 @@ export class MainScene extends Phaser.Scene {
 
     // Update game entities
     this.updateCharacters();
-    this.updateCars();
-    this.updatePlayerCar();
 
     // Center camera on first frame (camera dimensions now known)
     if (this.needsCameraCenter) {
@@ -470,7 +466,6 @@ export class MainScene extends Phaser.Scene {
     this.updateCamera(delta);
 
     // Render updated entities
-    this.renderCars();
     this.renderCharacters();
 
     // Handle dirty grid updates
@@ -487,12 +482,11 @@ export class MainScene extends Phaser.Scene {
   private updateStatsDisplay(): void {
     const fps = Math.round(this.game.loop.actualFps);
     const charCount = this.characters.length;
-    const carCount = this.cars.length + (this.playerCar ? 1 : 0);
 
     // Log every 60 frames (~1 second)
     this.statsLogCounter++;
     if (this.statsLogCounter >= 60) {
-      console.log(`[Stats] FPS: ${fps} | Characters: ${charCount} | Cars: ${carCount}`);
+      console.log(`[Stats] FPS: ${fps} | Characters: ${charCount}`);
       this.statsLogCounter = 0;
     }
 
@@ -516,7 +510,6 @@ export class MainScene extends Phaser.Scene {
       [
         `FPS: ${fps}`,
         `Characters: ${charCount}`,
-        `Cars: ${carCount}`,
         `Phaser-managed ✓`,
       ].join("\n")
     );
@@ -550,30 +543,7 @@ export class MainScene extends Phaser.Scene {
       this.shakeOffset = 0;
     }
 
-    // If in driving mode, follow the player car (sets base scroll absolutely every frame)
-    if (this.isPlayerDriving && this.playerCar) {
-      this.wasDriving = true;
-      const screenPos = this.gridToScreen(this.playerCar.x, this.playerCar.y);
-      const groundY = screenPos.y + SUBTILE_HEIGHT / 2;
-      const viewportWidth = camera.width / camera.zoom;
-      const viewportHeight = camera.height / camera.zoom;
-      this.baseScrollX = screenPos.x - viewportWidth / 2;
-      this.baseScrollY = groundY - viewportHeight / 2;
-      camera.setScroll(
-        Math.round(this.baseScrollX + (this.shakeAxis === "x" ? this.shakeOffset : 0)),
-        Math.round(this.baseScrollY + (this.shakeAxis === "y" ? this.shakeOffset : 0))
-      );
-      return;
-    }
-
-    // Transition: if we just stopped driving, freeze current camera position as the new base.
-    if (this.wasDriving) {
-      this.wasDriving = false;
-      this.baseScrollX = camera.scrollX;
-      this.baseScrollY = camera.scrollY - this.shakeOffset;
-    }
-
-    // Manual camera movement when not driving
+    // Manual camera movement
     // Don't move camera if user is typing in an input field
     const activeElement = document.activeElement;
     const isTyping =
@@ -631,7 +601,7 @@ export class MainScene extends Phaser.Scene {
     const gy = Math.floor(y);
     if (gx < 0 || gx >= GRID_WIDTH || gy < 0 || gy >= GRID_HEIGHT) return false;
     const tileType = this.grid[gy][gx].type;
-    return tileType === TileType.Road || tileType === TileType.Tile;
+    return tileType === TileType.Sidewalk || tileType === TileType.Tile;
   }
 
   private getValidDirections(tileX: number, tileY: number): Direction[] {
@@ -677,7 +647,7 @@ export class MainScene extends Phaser.Scene {
       for (let gy = 0; gy < GRID_HEIGHT; gy++) {
         for (let gx = 0; gx < GRID_WIDTH; gx++) {
           const tileType = this.grid[gy][gx].type;
-          if (tileType === TileType.Road || tileType === TileType.Tile) {
+          if (tileType === TileType.Sidewalk || tileType === TileType.Tile) {
             walkableTiles.push({ x: gx, y: gy });
           }
         }
@@ -751,398 +721,6 @@ export class MainScene extends Phaser.Scene {
   }
 
   // ============================================
-  // CAR LOGIC (moved from React)
-  // ============================================
-
-  // Get all cars (AI + player) without allocating a new array each call
-  private getAllCars(): Car[] {
-    this.allCarsCache.length = 0;
-    for (const car of this.cars) {
-      this.allCarsCache.push(car);
-    }
-    if (this.playerCar) {
-      this.allCarsCache.push(this.playerCar);
-    }
-    return this.allCarsCache;
-  }
-
-  private updateCars(): void {
-    for (let i = 0; i < this.cars.length; i++) {
-      this.cars[i] = this.updateSingleCar(this.cars[i]);
-    }
-  }
-
-  private isDrivable(x: number, y: number): boolean {
-    const gx = Math.floor(x);
-    const gy = Math.floor(y);
-    if (gx < 0 || gx >= GRID_WIDTH || gy < 0 || gy >= GRID_HEIGHT) return false;
-    return this.grid[gy][gx].type === TileType.Asphalt;
-  }
-
-  private getValidCarDirections(tileX: number, tileY: number): Direction[] {
-    const valid: Direction[] = [];
-    for (const dir of allDirections) {
-      const vec = directionVectors[dir];
-      if (this.isDrivable(tileX + vec.dx, tileY + vec.dy)) {
-        valid.push(dir);
-      }
-    }
-    return valid;
-  }
-
-  private isDirectionClear(
-    car: Car,
-    dir: Direction,
-    checkDist: number = 1.2
-  ): boolean {
-    const vec = directionVectors[dir];
-    const aheadX = car.x + vec.dx * checkDist;
-    const aheadY = car.y + vec.dy * checkDist;
-
-    const allCars = this.getAllCars();
-    for (const other of allCars) {
-      if (other.id === car.id) continue;
-      const dist = Math.sqrt(
-        Math.pow(other.x - aheadX, 2) + Math.pow(other.y - aheadY, 2)
-      );
-      if (dist < 0.7) return false;
-    }
-    return true;
-  }
-
-  private pickCarDirection(
-    car: Car,
-    tileX: number,
-    tileY: number,
-    currentDir: Direction,
-    atDeadEnd: boolean = false
-  ): Direction | null {
-    const validDirs = this.getValidCarDirections(tileX, tileY);
-    if (validDirs.length === 0) return null;
-
-    const opposite = oppositeDirection[currentDir];
-    const atIntersection = isAtIntersection(tileX, tileY, this.grid);
-    const laneDir = getLaneDirection(tileX, tileY, this.grid);
-
-    if (atDeadEnd || validDirs.length === 1) {
-      const uTurnDir = getUTurnDirection(tileX, tileY, currentDir, this.grid);
-      if (uTurnDir && validDirs.includes(uTurnDir)) {
-        return uTurnDir;
-      }
-      return validDirs[0];
-    }
-
-    if (!atIntersection) {
-      if (laneDir && validDirs.includes(laneDir)) {
-        if (this.isDirectionClear(car, laneDir)) {
-          return laneDir;
-        }
-        return null;
-      }
-
-      if (
-        validDirs.includes(currentDir) &&
-        this.isDirectionClear(car, currentDir)
-      ) {
-        return currentDir;
-      }
-
-      return null;
-    }
-
-    const turnableChoices = validDirs.filter((d) => {
-      if (d === opposite) return false;
-      return canTurnAtTile(tileX, tileY, currentDir, d);
-    });
-
-    if (
-      validDirs.includes(currentDir) &&
-      !turnableChoices.includes(currentDir)
-    ) {
-      turnableChoices.push(currentDir);
-    }
-
-    if (turnableChoices.length === 0) {
-      if (
-        validDirs.includes(currentDir) &&
-        this.isDirectionClear(car, currentDir)
-      ) {
-        return currentDir;
-      }
-      return null;
-    }
-
-    const clearChoices = turnableChoices.filter((d) =>
-      this.isDirectionClear(car, d)
-    );
-
-    if (clearChoices.length === 0) {
-      return null;
-    }
-
-    if (clearChoices.includes(currentDir) && Math.random() < 0.75) {
-      return currentDir;
-    }
-
-    const turnsOnly = clearChoices.filter((d) => d !== currentDir);
-    if (turnsOnly.length > 0) {
-      return turnsOnly[Math.floor(Math.random() * turnsOnly.length)];
-    }
-
-    return clearChoices[0];
-  }
-
-  private isCarBlocking(car: Car): boolean {
-    const vec = directionVectors[car.direction];
-    const MIN_CAR_SPACING = 1.8; // Increased to prevent visual overlap
-
-    const allCars = this.getAllCars();
-    for (const other of allCars) {
-      if (other.id === car.id) continue;
-
-      const dx = other.x - car.x;
-      const dy = other.y - car.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-
-      if (dist > MIN_CAR_SPACING * 1.5) continue;
-
-      const dotProduct = dx * vec.dx + dy * vec.dy;
-
-      if (dotProduct > 0 && dist < MIN_CAR_SPACING) {
-        const crossProduct = Math.abs(dx * vec.dy - dy * vec.dx);
-        if (crossProduct < 0.6) {
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  private updateSingleCar(car: Car): Car {
-    const { x, y, direction, speed, waiting } = car;
-    const vec = directionVectors[direction];
-    const tileX = Math.floor(x);
-    const tileY = Math.floor(y);
-
-    if (!this.isDrivable(tileX, tileY)) {
-      const asphaltTiles: { x: number; y: number }[] = [];
-      for (let gy = 0; gy < GRID_HEIGHT; gy++) {
-        for (let gx = 0; gx < GRID_WIDTH; gx++) {
-          if (this.grid[gy][gx].type === TileType.Asphalt) {
-            asphaltTiles.push({ x: gx, y: gy });
-          }
-        }
-      }
-      if (asphaltTiles.length > 0) {
-        const newTile =
-          asphaltTiles[Math.floor(Math.random() * asphaltTiles.length)];
-        const laneDir = getLaneDirection(newTile.x, newTile.y, this.grid);
-        return {
-          ...car,
-          x: newTile.x + 0.5,
-          y: newTile.y + 0.5,
-          direction: laneDir || Direction.Right,
-          waiting: 0,
-        };
-      }
-      return car;
-    }
-
-    const blocked = this.isCarBlocking(car);
-    const MAX_WAIT_FRAMES = 60;
-
-    if (blocked) {
-      const newWaiting = waiting + 1;
-
-      if (newWaiting > MAX_WAIT_FRAMES) {
-        if (isAtIntersection(tileX, tileY, this.grid)) {
-          const altDir = this.pickCarDirection(
-            car,
-            tileX,
-            tileY,
-            direction,
-            true
-          );
-          if (altDir && altDir !== direction) {
-            return {
-              ...car,
-              x: tileX + 0.5,
-              y: tileY + 0.5,
-              direction: altDir,
-              waiting: 0,
-            };
-          }
-        }
-        return { ...car, waiting: 0 };
-      }
-
-      return { ...car, waiting: newWaiting };
-    }
-
-    if (waiting > 0) {
-      return { ...car, waiting: 0 };
-    }
-
-    const inTileX = x - tileX;
-    const inTileY = y - tileY;
-    const threshold = speed * 2;
-    const nearCenter =
-      Math.abs(inTileX - 0.5) < threshold &&
-      Math.abs(inTileY - 0.5) < threshold;
-
-    let newDirection = direction;
-    let nextX = x;
-    let nextY = y;
-
-    if (nearCenter) {
-      const atIntersection = isAtIntersection(tileX, tileY, this.grid);
-      const laneDir = getLaneDirection(tileX, tileY, this.grid);
-      const nextTileX = tileX + vec.dx;
-      const nextTileY = tileY + vec.dy;
-
-      if (!this.isDrivable(nextTileX, nextTileY)) {
-        const newDir = this.pickCarDirection(
-          car,
-          tileX,
-          tileY,
-          direction,
-          true
-        );
-        if (newDir) {
-          newDirection = newDir;
-        }
-        nextX = tileX + 0.5;
-        nextY = tileY + 0.5;
-      } else if (atIntersection) {
-        const validDirs = this.getValidCarDirections(tileX, tileY);
-        if (validDirs.length >= 3 && Math.random() < 0.25) {
-          const newDir = this.pickCarDirection(
-            car,
-            tileX,
-            tileY,
-            direction,
-            false
-          );
-          if (newDir) {
-            newDirection = newDir;
-            nextX = tileX + 0.5;
-            nextY = tileY + 0.5;
-          }
-        }
-      } else if (laneDir && laneDir !== direction) {
-        if (this.getValidCarDirections(tileX, tileY).includes(laneDir)) {
-          newDirection = laneDir;
-          nextX = tileX + 0.5;
-          nextY = tileY + 0.5;
-        }
-      }
-    }
-
-    const moveVec = directionVectors[newDirection];
-    const pixelatedStep = Math.max(0.001, speed);
-    nextX += moveVec.dx * speed;
-    nextY += moveVec.dy * speed;
-
-    nextX = Math.round(nextX / pixelatedStep) * pixelatedStep;
-    nextY = Math.round(nextY / pixelatedStep) * pixelatedStep;
-
-    const finalTileX = Math.floor(nextX);
-    const finalTileY = Math.floor(nextY);
-
-    if (!this.isDrivable(finalTileX, finalTileY)) {
-      return {
-        ...car,
-        x: tileX + 0.5,
-        y: tileY + 0.5,
-        direction: newDirection,
-        waiting: 0,
-      };
-    }
-
-    return { ...car, x: nextX, y: nextY, direction: newDirection, waiting: 0 };
-  }
-
-  // ============================================
-  // PLAYER CAR LOGIC
-  // ============================================
-
-  private updatePlayerCar(): void {
-    if (!this.isPlayerDriving || !this.playerCar) return;
-
-    const car = this.playerCar;
-    let newDirection = car.direction;
-    let nextX = car.x;
-    let nextY = car.y;
-
-    let desiredDir: Direction | null = null;
-
-    if (this.pressedKeys.has("arrowup") || this.pressedKeys.has("w")) {
-      desiredDir = Direction.Up;
-    } else if (this.pressedKeys.has("arrowdown") || this.pressedKeys.has("s")) {
-      desiredDir = Direction.Down;
-    } else if (this.pressedKeys.has("arrowleft") || this.pressedKeys.has("a")) {
-      desiredDir = Direction.Left;
-    } else if (
-      this.pressedKeys.has("arrowright") ||
-      this.pressedKeys.has("d")
-    ) {
-      desiredDir = Direction.Right;
-    }
-
-    if (desiredDir) {
-      newDirection = desiredDir;
-      const vec = directionVectors[newDirection];
-      const moveX = nextX + vec.dx * car.speed;
-      const moveY = nextY + vec.dy * car.speed;
-
-      if (!this.checkPlayerCarCollision(moveX, moveY)) {
-        nextX = moveX;
-        nextY = moveY;
-      }
-    }
-
-    const pixelatedStep = Math.max(0.001, car.speed);
-    nextX = Math.round(nextX / pixelatedStep) * pixelatedStep;
-    nextY = Math.round(nextY / pixelatedStep) * pixelatedStep;
-
-    this.playerCar = { ...car, x: nextX, y: nextY, direction: newDirection };
-  }
-
-  private checkPlayerCarCollision(x: number, y: number): boolean {
-    const gx = Math.floor(x);
-    const gy = Math.floor(y);
-
-    if (gx < 0 || gx >= GRID_WIDTH || gy < 0 || gy >= GRID_HEIGHT) {
-      return true;
-    }
-
-    const cell = this.grid[gy][gx];
-
-    if (cell.type === TileType.Building) {
-      return true;
-    }
-
-    for (const car of this.cars) {
-      if (car.id === "player-car") continue;
-      const carTileX = Math.floor(car.x);
-      const carTileY = Math.floor(car.y);
-      if (carTileX === gx && carTileY === gy) {
-        return true;
-      }
-    }
-
-    for (const char of this.characters) {
-      const charTileX = Math.floor(char.x);
-      const charTileY = Math.floor(char.y);
-      if (charTileX === gx && charTileY === gy) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  // ============================================
   // PUBLIC METHODS (called from React)
   // ============================================
 
@@ -1164,9 +742,20 @@ export class MainScene extends Phaser.Scene {
     };
   }
 
+  // Convert grid to screen using pure math formula for smooth sub-tile movement
+  // This guarantees perfect 2:1 isometric ratios for moving entities (cars, characters)
+  // Unlike gridToScreen, this doesn't use the tilemap which can cause jitter with fractional coords
+  private gridToScreenSmooth(gridX: number, gridY: number): { x: number; y: number } {
+    return {
+      x: GRID_OFFSET_X + (gridX - gridY) * (SUBTILE_WIDTH / 2),
+      y: GRID_OFFSET_Y + (gridX + gridY) * (SUBTILE_HEIGHT / 2),
+    };
+  }
+
   screenToGrid(screenX: number, screenY: number): { x: number; y: number } {
     if (this.groundMap) {
-      const tilePoint = this.groundMap.worldToTileXY(screenX, screenY);
+      // Offset Y down so cursor selects the tile it's visually "on" rather than "under"
+      const tilePoint = this.groundMap.worldToTileXY(screenX, screenY + SUBTILE_HEIGHT / 2);
       if (tilePoint) {
         return { x: tilePoint.x, y: tilePoint.y };
       }
@@ -1232,10 +821,11 @@ export class MainScene extends Phaser.Scene {
           this.dragTiles.add(`${tileX},${tileY}`);
         }
 
-        // If dragging with road tool, add road segments in straight line
+        // If dragging with road lane tool, add lanes in straight line (snapped to 2x2 grid)
         if (
           this.isDragging &&
-          this.selectedTool === ToolType.RoadNetwork &&
+          (this.selectedTool === ToolType.RoadLane ||
+           this.selectedTool === ToolType.RoadTurn) &&
           this.dragStartTile
         ) {
           // Determine direction on first movement
@@ -1247,54 +837,48 @@ export class MainScene extends Phaser.Scene {
             } else if (dy > dx) {
               this.dragDirection = "vertical";
             } else {
-              // Equal movement - wait for more movement, keep initial segment
+              // Equal movement - wait for more movement, keep initial lane
               return;
             }
           }
 
-          // Clear and rebuild drag tiles for roads
+          // Clear and rebuild drag tiles for road lanes
           this.dragTiles.clear();
 
           // Constrain to the determined direction
           if (this.dragDirection === "horizontal") {
-            // Only add segments along horizontal line
+            // Only add lanes along horizontal line
             const startX = Math.min(this.dragStartTile.x, tileX);
             const endX = Math.max(this.dragStartTile.x, tileX);
-            const startSegment = getRoadSegmentOrigin(
-              startX,
-              this.dragStartTile.y
-            );
-            const endSegment = getRoadSegmentOrigin(endX, this.dragStartTile.y);
+            const startLane = getRoadLaneOrigin(startX, this.dragStartTile.y);
+            const endLane = getRoadLaneOrigin(endX, this.dragStartTile.y);
 
-            const startSegX = Math.min(startSegment.x, endSegment.x);
-            const endSegX = Math.max(startSegment.x, endSegment.x);
+            const startLaneX = Math.min(startLane.x, endLane.x);
+            const endLaneX = Math.max(startLane.x, endLane.x);
 
             for (
-              let segX = startSegX;
-              segX <= endSegX;
-              segX += ROAD_SEGMENT_SIZE
+              let laneX = startLaneX;
+              laneX <= endLaneX;
+              laneX += ROAD_LANE_SIZE
             ) {
-              this.dragTiles.add(`${segX},${startSegment.y}`);
+              this.dragTiles.add(`${laneX},${startLane.y}`);
             }
           } else if (this.dragDirection === "vertical") {
-            // Only add segments along vertical line
+            // Only add lanes along vertical line
             const startY = Math.min(this.dragStartTile.y, tileY);
             const endY = Math.max(this.dragStartTile.y, tileY);
-            const startSegment = getRoadSegmentOrigin(
-              this.dragStartTile.x,
-              startY
-            );
-            const endSegment = getRoadSegmentOrigin(this.dragStartTile.x, endY);
+            const startLane = getRoadLaneOrigin(this.dragStartTile.x, startY);
+            const endLane = getRoadLaneOrigin(this.dragStartTile.x, endY);
 
-            const startSegY = Math.min(startSegment.y, endSegment.y);
-            const endSegY = Math.max(startSegment.y, endSegment.y);
+            const startLaneY = Math.min(startLane.y, endLane.y);
+            const endLaneY = Math.max(startLane.y, endLane.y);
 
             for (
-              let segY = startSegY;
-              segY <= endSegY;
-              segY += ROAD_SEGMENT_SIZE
+              let laneY = startLaneY;
+              laneY <= endLaneY;
+              laneY += ROAD_LANE_SIZE
             ) {
-              this.dragTiles.add(`${startSegment.x},${segY}`);
+              this.dragTiles.add(`${startLane.x},${laneY}`);
             }
           }
 
@@ -1340,20 +924,25 @@ export class MainScene extends Phaser.Scene {
           this.selectedTool === ToolType.Tile ||
           this.selectedTool === ToolType.Asphalt ||
           this.selectedTool === ToolType.Eraser ||
-          this.selectedTool === ToolType.RoadNetwork
+          this.selectedTool === ToolType.Sidewalk ||
+          this.selectedTool === ToolType.RoadLane ||
+          this.selectedTool === ToolType.RoadTurn
         ) {
           this.isDragging = true;
           this.dragTiles.clear();
           this.dragStartTile = { x: this.hoverTile.x, y: this.hoverTile.y };
           this.dragDirection = null;
 
-          if (this.selectedTool === ToolType.RoadNetwork) {
-            // For roads, add the initial segment origin
-            const segmentOrigin = getRoadSegmentOrigin(
+          if (
+            this.selectedTool === ToolType.RoadLane ||
+            this.selectedTool === ToolType.RoadTurn
+          ) {
+            // For road lanes, add the initial lane origin (snapped to 2x2 grid)
+            const laneOrigin = getRoadLaneOrigin(
               this.hoverTile.x,
               this.hoverTile.y
             );
-            this.dragTiles.add(`${segmentOrigin.x},${segmentOrigin.y}`);
+            this.dragTiles.add(`${laneOrigin.x},${laneOrigin.y}`);
           } else {
             // For other tools, add the tile directly
             this.dragTiles.add(`${this.hoverTile.x},${this.hoverTile.y}`);
@@ -1389,11 +978,14 @@ export class MainScene extends Phaser.Scene {
           // Eraser uses confirmation dialog
           this.events_.onEraserDrag(tiles);
         } else if (
-          this.selectedTool === ToolType.RoadNetwork &&
-          this.events_.onRoadDrag
+          (this.selectedTool === ToolType.RoadLane ||
+           this.selectedTool === ToolType.RoadTurn) &&
+          this.events_.onRoadLaneDrag
         ) {
-          // Road drag - segments are already in dragTiles
-          this.events_.onRoadDrag(tiles);
+          // Road lane drag - lanes are already in dragTiles with 2x2 origins
+          // Map tool type to tile type
+          const tileType = this.selectedTool === ToolType.RoadTurn ? TileType.RoadTurn : TileType.RoadLane;
+          this.events_.onRoadLaneDrag(tiles, this.roadLaneDirection, tileType);
         } else if (this.events_.onTilesDrag) {
           // Snow/Tile place immediately
           this.events_.onTilesDrag(tiles);
@@ -1520,6 +1112,8 @@ export class MainScene extends Phaser.Scene {
     // Process dirty tiles
     const buildingsToRender = new Set<string>();
     const buildingsToRemove = new Set<string>();
+    const propsOnBuildingsToRender = new Set<string>();
+    const propsOnBuildingsToRemove = new Set<string>();
 
     for (const key of this.gridDirtyTiles) {
       const [xStr, yStr] = key.split(",");
@@ -1544,6 +1138,17 @@ export class MainScene extends Phaser.Scene {
       ) {
         buildingsToRemove.add(oldBuildingKey);
       }
+
+      // Track prop-on-building changes
+      const propKey = `prop_${x},${y}`;
+      if (cell.propId && cell.propOriginX === x && cell.propOriginY === y) {
+        // This is the origin of a prop on a building tile
+        propsOnBuildingsToRender.add(`${x},${y}`);
+      }
+      // Check if an old prop was here
+      if (this.propOnBuildingSprites.has(propKey) && !cell.propId) {
+        propsOnBuildingsToRemove.add(propKey);
+      }
     }
 
     // Remove old buildings and their glows (including slices)
@@ -1565,6 +1170,38 @@ export class MainScene extends Phaser.Scene {
       }
     }
 
+    // Remove old props on buildings
+    for (const key of propsOnBuildingsToRemove) {
+      const sprite = this.propOnBuildingSprites.get(key);
+      if (sprite) {
+        sprite.destroy();
+        this.propOnBuildingSprites.delete(key);
+      }
+    }
+
+    // Render new/changed props on buildings
+    for (const key of propsOnBuildingsToRender) {
+      const [xStr, yStr] = key.split(",");
+      const x = parseInt(xStr);
+      const y = parseInt(yStr);
+      const cell = this.grid[y]?.[x];
+      if (cell?.propId) {
+        const propKey = `prop_${x},${y}`;
+        // Remove old sprite if exists
+        const oldSprite = this.propOnBuildingSprites.get(propKey);
+        if (oldSprite) {
+          oldSprite.destroy();
+          this.propOnBuildingSprites.delete(propKey);
+        }
+        this.renderPropOnBuilding(x, y, cell.propId, cell.propOrientation);
+      }
+    }
+
+    // Update debug path overlay if enabled
+    if (this.showPaths) {
+      this.renderPathOverlay();
+    }
+
     this.gridDirtyTiles.clear();
   }
 
@@ -1579,7 +1216,7 @@ export class MainScene extends Phaser.Scene {
     for (let y = 0; y < GRID_HEIGHT; y++) {
       for (let x = 0; x < GRID_WIDTH; x++) {
         const tileType = this.grid[y][x].type;
-        if (tileType === TileType.Road || tileType === TileType.Tile) {
+        if (tileType === TileType.Sidewalk || tileType === TileType.Tile) {
           roadTiles.push({ x, y });
         }
       }
@@ -1606,99 +1243,21 @@ export class MainScene extends Phaser.Scene {
     return true;
   }
 
-  // Spawn a car
+  // Car methods (stubbed out - traffic system removed for now)
   spawnCar(): boolean {
-    const asphaltTiles: { x: number; y: number }[] = [];
-    for (let y = 0; y < GRID_HEIGHT; y++) {
-      for (let x = 0; x < GRID_WIDTH; x++) {
-        if (this.grid[y][x].type === TileType.Asphalt) {
-          asphaltTiles.push({ x, y });
-        }
-      }
-    }
-
-    if (asphaltTiles.length === 0) return false;
-
-    const asphaltTile =
-      asphaltTiles[Math.floor(Math.random() * asphaltTiles.length)];
-    const validDirs = allDirections.filter((dir) => {
-      const vec = directionVectors[dir];
-      const nx = asphaltTile.x + vec.dx;
-      const ny = asphaltTile.y + vec.dy;
-      if (nx < 0 || nx >= GRID_WIDTH || ny < 0 || ny >= GRID_HEIGHT)
-        return false;
-      return this.grid[ny][nx].type === TileType.Asphalt;
-    });
-
-    const laneDir = getLaneDirection(asphaltTile.x, asphaltTile.y, this.grid);
-    let direction: Direction;
-
-    if (laneDir && validDirs.includes(laneDir)) {
-      direction = laneDir;
-    } else if (validDirs.length > 0) {
-      direction = validDirs[Math.floor(Math.random() * validDirs.length)];
-    } else {
-      direction =
-        allDirections[Math.floor(Math.random() * allDirections.length)];
-    }
-
-    const carTypes = [CarType.Taxi, CarType.Jeep, CarType.Waymo, CarType.Robotaxi, CarType.Zoox];
-    const carType = carTypes[Math.floor(Math.random() * carTypes.length)];
-
-    const newCar: Car = {
-      id: generateId(),
-      x: asphaltTile.x + 0.5,
-      y: asphaltTile.y + 0.5,
-      direction,
-      speed: CAR_SPEED + (Math.random() - 0.5) * 0.005,
-      waiting: 0,
-      carType,
-    };
-
-    this.cars.push(newCar);
-    return true;
+    return false;
   }
 
-  // Enable/disable driving mode
-  setDrivingState(isDriving: boolean): void {
-    this.isPlayerDriving = isDriving;
-    this.pressedKeys.clear();
-
-    if (isDriving && !this.playerCar) {
-      // Spawn player car
-      const asphaltTiles: { x: number; y: number }[] = [];
-      for (let y = 0; y < GRID_HEIGHT; y++) {
-        for (let x = 0; x < GRID_WIDTH; x++) {
-          if (this.grid[y][x].type === TileType.Asphalt) {
-            asphaltTiles.push({ x, y });
-          }
-        }
-      }
-
-      if (asphaltTiles.length > 0) {
-        const asphaltTile =
-          asphaltTiles[Math.floor(Math.random() * asphaltTiles.length)];
-        this.playerCar = {
-          id: "player-car",
-          x: asphaltTile.x + 0.5,
-          y: asphaltTile.y + 0.5,
-          direction: Direction.Right,
-          speed: CAR_SPEED * 1.5,
-          waiting: 0,
-          carType: CarType.Jeep,
-        };
-      }
-    } else if (!isDriving) {
-      this.playerCar = null;
-    }
+  setDrivingState(_isDriving: boolean): void {
+    // No-op
   }
 
   getPlayerCar(): Car | null {
-    return this.playerCar;
+    return null;
   }
 
   isPlayerDrivingMode(): boolean {
-    return this.isPlayerDriving;
+    return false;
   }
 
   getCharacterCount(): number {
@@ -1706,7 +1265,7 @@ export class MainScene extends Phaser.Scene {
   }
 
   getCarCount(): number {
-    return this.cars.length;
+    return 0;
   }
 
   clearCharacters(): void {
@@ -1716,14 +1275,8 @@ export class MainScene extends Phaser.Scene {
   }
 
   clearCars(): void {
-    this.cars = [];
     this.carSprites.forEach((sprite) => sprite.destroy());
     this.carSprites.clear();
-    // Also clear player car if exists
-    if (this.playerCar) {
-      this.playerCar = null;
-      this.isPlayerDriving = false;
-    }
   }
 
   setSelectedTool(tool: ToolType): void {
@@ -1864,7 +1417,7 @@ export class MainScene extends Phaser.Scene {
         let color: number | null = null;
         const alpha = 0.5;
 
-        if (tileType === TileType.Road) {
+        if (tileType === TileType.Sidewalk) {
           color = 0x4488ff;
         } else if (tileType === TileType.Tile) {
           color = 0x44dddd;
@@ -1893,6 +1446,100 @@ export class MainScene extends Phaser.Scene {
       }
     }
 
+    // Draw lane direction arrows for all road lane types
+    // Red arrow = tile's stored direction
+    // Green arrow = turn direction (for turn tiles)
+    for (let y = 0; y < GRID_HEIGHT; y += ROAD_LANE_SIZE) {
+      for (let x = 0; x < GRID_WIDTH; x += ROAD_LANE_SIZE) {
+        const cell = this.grid[y]?.[x];
+        const isRoadLane = cell?.type === TileType.RoadLane ||
+                          cell?.type === TileType.RoadTurn;
+        if (isRoadLane && cell?.isOrigin && cell?.laneDirection) {
+          // Get center of 2x2 lane in screen coords
+          const centerX = x + ROAD_LANE_SIZE / 2;
+          const centerY = y + ROAD_LANE_SIZE / 2;
+          const screenPos = this.gridToScreen(centerX, centerY);
+
+          // Draw arrow showing tile's stored direction (RED)
+          const dir = cell.laneDirection;
+          const vec = directionVectors[dir];
+
+          // Arrow points in isometric direction
+          const isoVec = {
+            x: (vec.dx - vec.dy) * 15,
+            y: (vec.dx + vec.dy) * 7.5,
+          };
+
+          const startX = screenPos.x - isoVec.x * 0.5;
+          const startY = screenPos.y - isoVec.y * 0.5;
+          const endX = screenPos.x + isoVec.x * 0.5;
+          const endY = screenPos.y + isoVec.y * 0.5;
+
+          // Draw line
+          graphics.lineStyle(3, 0xff0000, 1);
+          graphics.beginPath();
+          graphics.moveTo(startX, startY);
+          graphics.lineTo(endX, endY);
+          graphics.strokePath();
+
+          // Draw arrowhead
+          const headSize = 6;
+          const angle = Math.atan2(endY - startY, endX - startX);
+          graphics.fillStyle(0xff0000, 1);
+          graphics.beginPath();
+          graphics.moveTo(endX, endY);
+          graphics.lineTo(
+            endX - headSize * Math.cos(angle - 0.5),
+            endY - headSize * Math.sin(angle - 0.5)
+          );
+          graphics.lineTo(
+            endX - headSize * Math.cos(angle + 0.5),
+            endY - headSize * Math.sin(angle + 0.5)
+          );
+          graphics.closePath();
+          graphics.fillPath();
+
+          // For turn tiles, draw a second arrow in the turn direction (GREEN)
+          if (cell.type === TileType.RoadTurn) {
+            const turnDir = rightTurnDirection[dir];
+            const turnVec = directionVectors[turnDir];
+            const turnIsoVec = {
+              x: (turnVec.dx - turnVec.dy) * 15,
+              y: (turnVec.dx + turnVec.dy) * 7.5,
+            };
+
+            const turnStartX = screenPos.x - turnIsoVec.x * 0.5;
+            const turnStartY = screenPos.y - turnIsoVec.y * 0.5;
+            const turnEndX = screenPos.x + turnIsoVec.x * 0.5;
+            const turnEndY = screenPos.y + turnIsoVec.y * 0.5;
+
+            // Draw turn arrow line (GREEN)
+            graphics.lineStyle(3, 0x00ff00, 0.8);
+            graphics.beginPath();
+            graphics.moveTo(turnStartX, turnStartY);
+            graphics.lineTo(turnEndX, turnEndY);
+            graphics.strokePath();
+
+            // Draw turn arrowhead
+            const turnAngle = Math.atan2(turnEndY - turnStartY, turnEndX - turnStartX);
+            graphics.fillStyle(0x00ff00, 0.8);
+            graphics.beginPath();
+            graphics.moveTo(turnEndX, turnEndY);
+            graphics.lineTo(
+              turnEndX - headSize * Math.cos(turnAngle - 0.5),
+              turnEndY - headSize * Math.sin(turnAngle - 0.5)
+            );
+            graphics.lineTo(
+              turnEndX - headSize * Math.cos(turnAngle + 0.5),
+              turnEndY - headSize * Math.sin(turnAngle + 0.5)
+            );
+            graphics.closePath();
+            graphics.fillPath();
+          }
+        }
+      }
+    }
+
     this.pathOverlaySprites = graphics;
   }
 
@@ -1900,6 +1547,8 @@ export class MainScene extends Phaser.Scene {
     // Ground tiles are now handled by the tilemap - only render buildings here
     this.buildingSprites.forEach((sprite) => sprite.destroy());
     this.buildingSprites.clear();
+    this.propOnBuildingSprites.forEach((sprite) => sprite.destroy());
+    this.propOnBuildingSprites.clear();
     this.glowSprites.forEach((sprite) => sprite.destroy());
     this.glowSprites.clear();
 
@@ -1918,6 +1567,18 @@ export class MainScene extends Phaser.Scene {
           cell.buildingId
         ) {
           this.renderBuilding(x, y, cell.buildingId, cell.buildingOrientation);
+        }
+      }
+    }
+
+    // Render props on buildings (after buildings so they appear on top)
+    for (let y = 0; y < GRID_HEIGHT; y++) {
+      for (let x = 0; x < GRID_WIDTH; x++) {
+        const cell = this.grid[y]?.[x];
+        if (!cell) continue;
+
+        if (cell.propId && cell.propOriginX === x && cell.propOriginY === y) {
+          this.renderPropOnBuilding(x, y, cell.propId, cell.propOrientation);
         }
       }
     }
@@ -1955,11 +1616,15 @@ export class MainScene extends Phaser.Scene {
     // Helper for quadrant offset (0=TL, 1=TR, 2=BL, 3=BR)
     const getQuadrant = () => (y % 2) * 2 + (x % 2);
 
-    if (cell.type === TileType.Road || cell.type === TileType.Tile) {
+    if (cell.type === TileType.Sidewalk || cell.type === TileType.Tile) {
       // Quadrant tile
       return TileIndex.RoadTL + getQuadrant();
-    } else if (cell.type === TileType.Asphalt) {
-      // Quadrant tile
+    } else if (
+      cell.type === TileType.Asphalt ||
+      cell.type === TileType.RoadLane ||
+      cell.type === TileType.RoadTurn
+    ) {
+      // Quadrant tile - road lanes render as asphalt
       return TileIndex.AsphaltTL + getQuadrant();
     } else if (cell.type === TileType.Snow) {
       // Non-quadrant, but with variants
@@ -1973,7 +1638,7 @@ export class MainScene extends Phaser.Scene {
           building && (building.category === "props" || building.isDecoration);
         if (preservesTile && cell.underlyingTileType) {
           if (cell.underlyingTileType === TileType.Tile ||
-              cell.underlyingTileType === TileType.Road) {
+              cell.underlyingTileType === TileType.Sidewalk) {
             return TileIndex.RoadTL + getQuadrant();
           } else if (cell.underlyingTileType === TileType.Asphalt) {
             return TileIndex.AsphaltTL + getQuadrant();
@@ -2019,6 +1684,52 @@ export class MainScene extends Phaser.Scene {
       glow.destroy();
       this.glowSprites.delete(buildingKey);
     }
+  }
+
+  // Render a prop placed on a building's prop slot
+  private renderPropOnBuilding(
+    originX: number,
+    originY: number,
+    propId: string,
+    orientation?: Direction
+  ): void {
+    const prop = getBuilding(propId);
+    if (!prop) {
+      console.warn(`Prop not found in registry: ${propId}`);
+      return;
+    }
+
+    const key = `prop_${originX},${originY}`;
+    const textureKey = this.getBuildingTextureKey(prop, orientation);
+
+    if (!this.textures.exists(textureKey)) {
+      console.warn(`Prop texture not found: ${textureKey}`);
+      return;
+    }
+
+    // Get footprint for positioning
+    const footprint = getBuildingFootprint(prop, orientation);
+
+    // Front corner is at the SE corner of the footprint
+    const frontX = originX + footprint.width - 1;
+    const frontY = originY + footprint.height - 1;
+    const screenPos = this.gridToScreen(frontX, frontY);
+    const bottomY = screenPos.y + SUBTILE_HEIGHT;
+
+    // Create the prop sprite
+    const sprite = this.add.image(screenPos.x, bottomY, textureKey);
+    sprite.setOrigin(0.5, 1); // Bottom-center anchor
+
+    // Apply tint if needed (like flower bush)
+    if (propId === "flower-bush") {
+      sprite.setTint(0xbbddbb);
+    }
+
+    // Props on buildings render slightly above buildings (0.07 layer)
+    const depth = this.depthFromSortPoint(screenPos.x, bottomY, 0.07);
+    sprite.setDepth(depth);
+
+    this.propOnBuildingSprites.set(key, sprite);
   }
 
   private renderBuilding(
@@ -2350,42 +2061,9 @@ export class MainScene extends Phaser.Scene {
     return `${building.id}_${firstDir}`;
   }
 
-  // Reusable Set for tracking current car IDs (avoids allocating new Set each frame)
-  private currentCarIdsCache: Set<string> = new Set();
-
+  // Car rendering (stubbed out - traffic system removed for now)
   private renderCars(): void {
-    // Get all cars to render (AI + player) - uses cached array
-    const allCars = this.getAllCars();
-    this.currentCarIdsCache.clear();
-    for (const car of allCars) {
-      this.currentCarIdsCache.add(car.id);
-    }
-
-    // Remove sprites for cars that no longer exist
-    this.carSprites.forEach((sprite, id) => {
-      if (!this.currentCarIdsCache.has(id)) {
-        sprite.destroy();
-        this.carSprites.delete(id);
-      }
-    });
-
-    // Update or create car sprites
-    for (const car of allCars) {
-      const screenPos = this.gridToScreen(car.x, car.y);
-      const groundY = screenPos.y + SUBTILE_HEIGHT / 2;
-      const textureKey = this.getCarTextureKey(car.carType, car.direction);
-
-      let sprite = this.carSprites.get(car.id);
-      if (!sprite) {
-        sprite = this.add.sprite(screenPos.x, groundY, textureKey);
-        sprite.setOrigin(0.5, 1);
-        this.carSprites.set(car.id, sprite);
-      } else {
-        sprite.setPosition(screenPos.x, groundY);
-        sprite.setTexture(textureKey);
-      }
-      sprite.setDepth(this.depthFromSortPoint(screenPos.x, groundY, 0.1));
-    }
+    // No-op - traffic system removed
   }
 
   private getCarTextureKey(carType: CarType, direction: Direction): string {
@@ -2408,7 +2086,8 @@ export class MainScene extends Phaser.Scene {
     });
 
     for (const char of this.characters) {
-      const screenPos = this.gridToScreen(char.x, char.y);
+      // Use smooth formula for characters - clean isometric movement
+      const screenPos = this.gridToScreenSmooth(char.x, char.y);
       const centerY = screenPos.y + SUBTILE_HEIGHT / 2;
       const textureKey = this.getCharacterTextureKey(
         char.characterType,
@@ -2458,6 +2137,71 @@ export class MainScene extends Phaser.Scene {
     this.lotPreviewSprites = [];
   }
 
+  // Draw a direction arrow at screen position (used for road lane preview)
+  private drawDirectionArrow(
+    screenX: number,
+    screenY: number,
+    direction: Direction,
+    color: number = 0x00ff00,
+    alpha: number = 0.9
+  ): void {
+    const graphics = this.add.graphics();
+    graphics.setDepth(2_000_000); // Above everything
+
+    const arrowLength = 12;
+    const arrowHeadSize = 5;
+
+    // Direction vectors
+    let dx = 0, dy = 0;
+    switch (direction) {
+      case Direction.Right: dx = 1; dy = 0.5; break;  // Isometric right (SE)
+      case Direction.Left: dx = -1; dy = -0.5; break; // Isometric left (NW)
+      case Direction.Down: dx = -1; dy = 0.5; break;  // Isometric down (SW)
+      case Direction.Up: dx = 1; dy = -0.5; break;    // Isometric up (NE)
+    }
+
+    // Normalize and scale
+    const len = Math.sqrt(dx * dx + dy * dy);
+    dx = (dx / len) * arrowLength;
+    dy = (dy / len) * arrowLength;
+
+    // Arrow line
+    const startX = screenX - dx * 0.5;
+    const startY = screenY - dy * 0.5;
+    const endX = screenX + dx * 0.5;
+    const endY = screenY + dy * 0.5;
+
+    graphics.lineStyle(2, color, alpha);
+    graphics.beginPath();
+    graphics.moveTo(startX, startY);
+    graphics.lineTo(endX, endY);
+    graphics.strokePath();
+
+    // Arrow head (two lines forming a V)
+    const headAngle = Math.atan2(dy, dx);
+    const headAngle1 = headAngle + Math.PI * 0.75;
+    const headAngle2 = headAngle - Math.PI * 0.75;
+
+    graphics.beginPath();
+    graphics.moveTo(endX, endY);
+    graphics.lineTo(
+      endX + Math.cos(headAngle1) * arrowHeadSize,
+      endY + Math.sin(headAngle1) * arrowHeadSize
+    );
+    graphics.strokePath();
+
+    graphics.beginPath();
+    graphics.moveTo(endX, endY);
+    graphics.lineTo(
+      endX + Math.cos(headAngle2) * arrowHeadSize,
+      endY + Math.sin(headAngle2) * arrowHeadSize
+    );
+    graphics.strokePath();
+
+    // Add to preview sprites so it gets cleaned up
+    this.previewSprites.push(graphics);
+  }
+
   private updatePreview(): void {
     this.clearPreview();
 
@@ -2466,76 +2210,75 @@ export class MainScene extends Phaser.Scene {
 
     const { x, y } = this.hoverTile;
 
-    if (this.selectedTool === ToolType.RoadNetwork) {
-      // Get segments to preview - either drag set or just hover segment
-      const segmentsToPreview: Array<{ x: number; y: number }> = [];
+    if (
+      this.selectedTool === ToolType.RoadLane ||
+      this.selectedTool === ToolType.RoadTurn
+    ) {
+      // Get lanes to preview - either drag set or just hover lane
+      const lanesToPreview: Array<{ x: number; y: number }> = [];
       if (this.isDragging && this.dragTiles.size > 0) {
-        // When dragging, show preview for all segments in drag set
+        // When dragging, show preview for all lanes in drag set
         this.dragTiles.forEach((key) => {
-          const [segX, segY] = key.split(",").map(Number);
-          segmentsToPreview.push({ x: segX, y: segY });
+          const [laneX, laneY] = key.split(",").map(Number);
+          lanesToPreview.push({ x: laneX, y: laneY });
         });
       } else if (x >= 0 && x < GRID_WIDTH && y >= 0 && y < GRID_HEIGHT) {
-        // Single hover - show preview for hovered segment
-        const segmentOrigin = getRoadSegmentOrigin(x, y);
-        segmentsToPreview.push({ x: segmentOrigin.x, y: segmentOrigin.y });
+        // Single hover - show preview for hovered lane (snapped to 2x2 grid)
+        const laneOrigin = getRoadLaneOrigin(x, y);
+        lanesToPreview.push({ x: laneOrigin.x, y: laneOrigin.y });
       }
 
-      for (const seg of segmentsToPreview) {
-        const segmentOrigin = { x: seg.x, y: seg.y };
-        const placementCheck = canPlaceRoadSegment(
+      for (const lane of lanesToPreview) {
+        const laneOrigin = { x: lane.x, y: lane.y };
+        const placementCheck = canPlaceRoadLane(
           this.grid,
-          segmentOrigin.x,
-          segmentOrigin.y
+          laneOrigin.x,
+          laneOrigin.y
         );
-        const segmentHasCollision = !placementCheck.valid;
+        const hasCollision = !placementCheck.valid;
 
-        const tempGrid: GridCell[][] = this.grid.map((row) =>
-          row.map((cell) => ({ ...cell }))
-        );
-
-        for (let dy = 0; dy < ROAD_SEGMENT_SIZE; dy++) {
-          for (let dx = 0; dx < ROAD_SEGMENT_SIZE; dx++) {
-            const px = segmentOrigin.x + dx;
-            const py = segmentOrigin.y + dy;
+        // Draw 2x2 asphalt tiles for the lane
+        for (let dy = 0; dy < ROAD_LANE_SIZE; dy++) {
+          for (let dx = 0; dx < ROAD_LANE_SIZE; dx++) {
+            const px = laneOrigin.x + dx;
+            const py = laneOrigin.y + dy;
             if (px < GRID_WIDTH && py < GRID_HEIGHT) {
-              tempGrid[py][px].isOrigin = dx === 0 && dy === 0;
-              tempGrid[py][px].originX = segmentOrigin.x;
-              tempGrid[py][px].originY = segmentOrigin.y;
-              tempGrid[py][px].type = TileType.Road;
+              const screenPos = this.gridToScreen(px, py);
+              const preview = this.add.image(screenPos.x, screenPos.y, "asphalt");
+              preview.setOrigin(0.5, 0);
+              preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
+              preview.setAlpha(hasCollision ? 0.3 : 0.7);
+              if (hasCollision) preview.setTint(0xff0000);
+              preview.setDepth(this.depthFromSortPoint(screenPos.x, screenPos.y, 1_000_000));
+              this.previewSprites.push(preview);
             }
           }
         }
 
-        const connections = getRoadConnections(
-          tempGrid,
-          segmentOrigin.x,
-          segmentOrigin.y
-        );
-        const segmentType = getSegmentType(connections);
-        const pattern = generateRoadPattern(segmentType);
+        // Draw direction arrow in center of lane
+        const centerX = laneOrigin.x + ROAD_LANE_SIZE / 2;
+        const centerY = laneOrigin.y + ROAD_LANE_SIZE / 2;
+        const centerScreen = this.gridToScreen(centerX, centerY);
 
-        for (const tile of pattern) {
-          const px = segmentOrigin.x + tile.dx;
-          const py = segmentOrigin.y + tile.dy;
-          if (px < GRID_WIDTH && py < GRID_HEIGHT) {
-            const screenPos = this.gridToScreen(px, py);
-            const textureKey =
-              tile.type === TileType.Asphalt ? "asphalt" : "road";
-            const preview = this.add.image(
-              screenPos.x,
-              screenPos.y,
-              textureKey
-            );
-            preview.setOrigin(0.5, 0);
-            preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
-            preview.setAlpha(segmentHasCollision ? 0.3 : 0.7);
-            if (segmentHasCollision) preview.setTint(0xff0000);
-            preview.setDepth(
-              this.depthFromSortPoint(screenPos.x, screenPos.y, 1_000_000)
-            );
-            this.previewSprites.push(preview);
-          }
+        // Main direction (straight)
+        this.drawDirectionArrow(
+          centerScreen.x,
+          centerScreen.y,
+          this.roadLaneDirection,
+          hasCollision ? 0xff0000 : 0x00ff00,
+          hasCollision ? 0.5 : 0.9
+        );
+
+        // For turn tiles, also draw the turn direction (right turn)
+        if (this.selectedTool === ToolType.RoadTurn) {
+          const turnDir = rightTurnDirection[this.roadLaneDirection];
+          this.drawDirectionArrow(
+            centerScreen.x,
+            centerScreen.y,
+            turnDir,
+            hasCollision ? 0xff6666 : 0x66ff66,
+            hasCollision ? 0.4 : 0.7
+          );
         }
       }
     } else if (this.selectedTool === ToolType.Tile) {
@@ -2835,16 +2578,16 @@ export class MainScene extends Phaser.Scene {
           const originY = cell.originY ?? ty;
           const cellType = cell.type;
 
-          // Check if this is a road segment
-          const isRoadSegment =
-            originX % ROAD_SEGMENT_SIZE === 0 &&
-            originY % ROAD_SEGMENT_SIZE === 0 &&
-            (cellType === TileType.Road || cellType === TileType.Asphalt);
+          // Check if this is a road lane
+          const isRoadLane =
+            originX % ROAD_LANE_SIZE === 0 &&
+            originY % ROAD_LANE_SIZE === 0 &&
+            cellType === TileType.RoadLane;
 
-          if (isRoadSegment) {
-            // Show entire road segment
-            for (let dy = 0; dy < ROAD_SEGMENT_SIZE; dy++) {
-              for (let dx = 0; dx < ROAD_SEGMENT_SIZE; dx++) {
+          if (isRoadLane) {
+            // Show entire road lane (2x2)
+            for (let dy = 0; dy < ROAD_LANE_SIZE; dy++) {
+              for (let dx = 0; dx < ROAD_LANE_SIZE; dx++) {
                 const px = originX + dx;
                 const py = originY + dy;
                 if (
@@ -2856,12 +2599,10 @@ export class MainScene extends Phaser.Scene {
                   const tileCell = this.grid[py]?.[px];
                   if (tileCell && tileCell.type !== TileType.Grass) {
                     const screenPos = this.gridToScreen(px, py);
-                    const textureKey =
-                      tileCell.type === TileType.Asphalt ? "asphalt" : "road";
                     const preview = this.add.image(
                       screenPos.x,
                       screenPos.y,
-                      textureKey
+                      "asphalt"
                     );
                     preview.setOrigin(0.5, 0);
                     preview.setScale(SUBTILE_WIDTH / preview.width, SUBTILE_HEIGHT / preview.height);
@@ -2954,7 +2695,7 @@ export class MainScene extends Phaser.Scene {
               const screenPos = this.gridToScreen(tx, ty);
               let textureKey = "grass";
               if (cellType === TileType.Asphalt) textureKey = "asphalt";
-              else if (cellType === TileType.Road || cellType === TileType.Tile)
+              else if (cellType === TileType.Sidewalk || cellType === TileType.Tile)
                 textureKey = "road";
               else if (cellType === TileType.Snow)
                 textureKey = getSnowTextureKey(tx, ty);

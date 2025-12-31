@@ -28,22 +28,23 @@ npm run lint    # ESLint
 /app
   /components
     /game
-      /phaser        # Phaser game engine code
-        MainScene.ts   # Core game logic, rendering, entities
-        PhaserGame.tsx # React wrapper with imperative handle
-      GameBoard.tsx    # Main React component, grid state
-      types.ts         # Enums: TileType, ToolType, Direction
-      roadUtils.ts     # Road connection logic
-    /ui              # React UI components (ToolWindow, Modal, etc.)
+      /phaser           # Phaser game engine code
+        MainScene.ts      # Core scene: rendering, input, entity management
+        TrafficManager.ts # Car spawning, movement, collision detection
+        PhaserGame.tsx    # React wrapper with imperative handle
+      GameBoard.tsx     # Main React component, grid state
+      types.ts          # Enums: TileType, ToolType, Direction
+      roadUtils.ts      # Road lane helpers, direction vectors
+    /ui               # React UI components (ToolWindow, Modal, etc.)
   /data
-    buildings.ts     # Building registry (single source of truth)
+    buildings.ts      # Building registry (single source of truth)
   /utils
-    sounds.ts        # Audio effects
+    sounds.ts         # Audio effects
 /public
-  /Building          # Building sprites by category
-  /Tiles             # Ground tiles (grass, road, asphalt, snow)
-  /Characters        # Walking GIF animations (4 directions)
-  /cars              # Vehicle sprites (4 directions)
+  /Building           # Building sprites by category
+  /Tiles              # Ground tiles (grass, road, asphalt, snow)
+  /Characters         # Walking GIF animations (4 directions)
+  /cars               # Vehicle sprites (4 directions)
 ```
 
 ## Architecture
@@ -54,9 +55,25 @@ npm run lint    # ESLint
 - React → Phaser: via ref methods (`spawnCharacter()`, `shakeScreen()`)
 - Phaser → React: via callbacks (`onTileClick`, `onTilesDrag`)
 
+**Manager Pattern:**
+Game logic is organized into focused manager classes for extensibility and performance:
+- `TrafficManager` - Car spawning, track-based movement, collision detection, player car
+- Future: `CitizenManager` - Character spawning, pathfinding, destinations
+- Future: `BuildingManager` - Building state, upgrades, effects
+- Future: `SimulationManager` - Orchestrates all managers, handles simulation tick
+
+Managers are data-oriented (arrays of plain objects, not class instances) for cache-friendly iteration over large cities. MainScene owns manager instances and delegates entity updates to them.
+
+**Traffic System:**
+Cars use track-based movement like trains on rails:
+- Cars locked to 2x2 road lane centers (ROAD_LANE_SIZE = 2)
+- Movement follows lane direction automatically
+- Same-lane collision detection queues cars behind each other
+- Dead ends: cars stop at lane center, don't loop
+
 **Isometric System:**
-- Tile size: 64x32 pixels
-- Roads snap to 4x4 grid segments
+- Tile size: 44x22 pixels (SUBTILE_WIDTH/HEIGHT)
+- Roads snap to 2x2 lane segments
 - Depth sorting: `depth = (x + y) * DEPTH_Y_MULT`
 
 ## Key Files to Modify
@@ -65,9 +82,10 @@ npm run lint    # ESLint
 |------|------|
 | Add new buildings | `app/data/buildings.ts` |
 | Game logic/rendering | `app/components/game/phaser/MainScene.ts` |
+| Car/traffic behavior | `app/components/game/phaser/TrafficManager.ts` |
 | UI/grid state | `app/components/game/GameBoard.tsx` |
 | Types/enums | `app/components/game/types.ts` |
-| Road behavior | `app/components/game/roadUtils.ts` |
+| Road lane helpers | `app/components/game/roadUtils.ts` |
 
 ## Adding Buildings
 

@@ -1,7 +1,9 @@
 export enum TileType {
   Grass = "grass",
-  Road = "road",
-  Asphalt = "asphalt",
+  Sidewalk = "sidewalk", // Renamed from "road" - pedestrian walkway
+  Asphalt = "asphalt", // Plain asphalt texture (decorative)
+  RoadLane = "roadLane", // 2x2 lane with direction (for traffic)
+  RoadTurn = "roadTurn", // 2x2 lane: can go straight OR turn right (rotate for other directions)
   Tile = "tile",
   Snow = "snow",
   Building = "building",
@@ -10,8 +12,10 @@ export enum TileType {
 // Simplified tool types - Building is now generic, actual building selected separately
 export enum ToolType {
   None = "none",
-  RoadNetwork = "roadNetwork",
-  Asphalt = "asphalt",
+  RoadLane = "roadLane", // 2x2 lane placement with direction (1-way)
+  RoadTurn = "roadTurn", // 2x2 lane: straight or right turn (rotate for all directions)
+  Asphalt = "asphalt", // Plain asphalt (decorative)
+  Sidewalk = "sidewalk", // Pedestrian walkway
   Tile = "tile",
   Snow = "snow",
   Building = "building", // Generic - actual building ID stored separately
@@ -32,6 +36,15 @@ export interface GridCell {
   buildingOrientation?: Direction;
   // For props, store the underlying tile type (so props don't render their own floor)
   underlyingTileType?: TileType;
+  // For road lanes, the direction of traffic flow
+  laneDirection?: Direction;
+  // For building tiles that allow props on top (e.g., porch areas)
+  allowsProp?: boolean;
+  // For props placed on building tiles (prop layer)
+  propId?: string;
+  propOriginX?: number;
+  propOriginY?: number;
+  propOrientation?: Direction;
 }
 
 export enum Direction {
@@ -95,17 +108,22 @@ export const TILE_HEIGHT = 32; // 2 * SUBTILE_HEIGHT
 // Lot dimensions in subtiles (8x8 subtiles = 4x4 tiles)
 export const LOT_SIZE = 8;
 
+// Road lane size in subtiles (2x2 subtiles per lane)
+export const ROAD_LANE_SIZE = 2;
+
 // Grid is measured in SUBTILES (finest unit)
 export const GRID_WIDTH = 192;  // 24 lots * 8 subtiles
 export const GRID_HEIGHT = 192;
 
 export const CAR_SPEED = 0.05;
 
-// Tile sizes for different types (in grid cells) - this is the FOOTPRINT
+// Tile sizes for different types (in grid cells/subtiles) - this is the FOOTPRINT
 export const TILE_SIZES: Record<TileType, { w: number; h: number }> = {
   [TileType.Grass]: { w: 1, h: 1 },
-  [TileType.Road]: { w: 1, h: 1 },
+  [TileType.Sidewalk]: { w: 1, h: 1 },
   [TileType.Asphalt]: { w: 1, h: 1 },
+  [TileType.RoadLane]: { w: 2, h: 2 }, // 2x2 subtiles per lane
+  [TileType.RoadTurn]: { w: 2, h: 2 }, // 2x2 turn tile (straight or right turn)
   [TileType.Tile]: { w: 1, h: 1 },
   [TileType.Snow]: { w: 1, h: 1 },
   [TileType.Building]: { w: 4, h: 4 }, // Default, actual size from building registry
@@ -165,8 +183,10 @@ export enum TileIndex {
 // Which tile types use quadrant system (native res, position-based selection)
 export const QUADRANT_TILES: Record<string, boolean> = {
   grass: false,    // Scaled for now
-  road: true,      // Quadrant-based
+  sidewalk: true,  // Quadrant-based (was "road")
   asphalt: true,   // Quadrant-based
+  roadLane: true,  // Quadrant-based (2x2 lanes)
+  roadTurn: true,  // Same as roadLane (straight or right turn)
   snow: false,     // Scaled for now
 };
 

@@ -10,7 +10,7 @@ import {
 import Phaser from "phaser";
 import { MainScene, SceneEvents } from "./MainScene";
 import { createGameConfig } from "./gameConfig";
-import { GridCell, ToolType, Direction, Car } from "../types";
+import { GridCell, ToolType, Direction, Car, TileType } from "../types";
 
 // Exposed methods for parent component
 export interface PhaserGameHandle {
@@ -44,7 +44,7 @@ interface PhaserGameProps {
   onTileHover?: (x: number | null, y: number | null) => void;
   onTilesDrag?: (tiles: Array<{ x: number; y: number }>) => void;
   onEraserDrag?: (tiles: Array<{ x: number; y: number }>) => void;
-  onRoadDrag?: (segments: Array<{ x: number; y: number }>) => void;
+  onRoadLaneDrag?: (lanes: Array<{ x: number; y: number }>, direction: Direction, tileType: TileType) => void;
   onZoomChange?: (zoom: number) => void;
   showPaths?: boolean;
   showStats?: boolean;
@@ -63,7 +63,7 @@ const PhaserGame = forwardRef<PhaserGameHandle, PhaserGameProps>(
       onTileHover,
       onTilesDrag,
       onEraserDrag,
-      onRoadDrag,
+      onRoadLaneDrag,
       onZoomChange,
       showPaths = false,
       showStats = true,
@@ -179,7 +179,7 @@ const PhaserGame = forwardRef<PhaserGameHandle, PhaserGameProps>(
           onTileHover: (x, y) => onTileHover?.(x, y),
           onTilesDrag: (tiles) => onTilesDrag?.(tiles),
           onEraserDrag: (tiles) => onEraserDrag?.(tiles),
-          onRoadDrag: (segments) => onRoadDrag?.(segments),
+          onRoadLaneDrag: (lanes, direction, tileType) => onRoadLaneDrag?.(lanes, direction, tileType),
         };
         scene.setEventCallbacks(events);
 
@@ -259,11 +259,11 @@ const PhaserGame = forwardRef<PhaserGameHandle, PhaserGameProps>(
           onTileHover: (x, y) => onTileHover?.(x, y),
           onTilesDrag: (tiles) => onTilesDrag?.(tiles),
           onEraserDrag: (tiles) => onEraserDrag?.(tiles),
-          onRoadDrag: (segments) => onRoadDrag?.(segments),
+          onRoadLaneDrag: (lanes, direction, tileType) => onRoadLaneDrag?.(lanes, direction, tileType),
         };
         sceneRef.current.setEventCallbacks(events);
       }
-    }, [onTileClick, onTileHover, onTilesDrag, onEraserDrag, onRoadDrag]);
+    }, [onTileClick, onTileHover, onTilesDrag, onEraserDrag, onRoadLaneDrag]);
 
     return (
       <div

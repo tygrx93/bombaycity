@@ -307,13 +307,13 @@ export default function ToolWindow({
             >
               <button
                 onClick={() => {
-                  onToolSelect(ToolType.RoadNetwork);
+                  onToolSelect(ToolType.RoadLane);
                   playClickSound();
                 }}
                 className={`rct-button ${
-                  selectedTool === ToolType.RoadNetwork ? "active" : ""
+                  selectedTool === ToolType.RoadLane ? "active" : ""
                 }`}
-                title="Road"
+                title="Road Lane (R to rotate direction)"
                 style={{
                   display: "flex",
                   flexDirection: "column",
@@ -333,7 +333,37 @@ export default function ToolWindow({
                     imageRendering: "pixelated",
                   }}
                 />
-                <span style={{ fontSize: 13, marginTop: 4 }}>Road</span>
+                <span style={{ fontSize: 13, marginTop: 4 }}>1-Way</span>
+              </button>
+              <button
+                onClick={() => {
+                  onToolSelect(ToolType.RoadTurn);
+                  playClickSound();
+                }}
+                className={`rct-button ${
+                  selectedTool === ToolType.RoadTurn ? "active" : ""
+                }`}
+                title="Turn Tile: Straight or Right Turn (R to rotate)"
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: 8,
+                  minHeight: 60,
+                }}
+              >
+                <img
+                  src="/Tiles/1x1asphalt.png"
+                  alt="Turn"
+                  style={{
+                    width: 40,
+                    height: 40,
+                    objectFit: "contain",
+                    imageRendering: "pixelated",
+                  }}
+                />
+                <span style={{ fontSize: 11, marginTop: 4 }}>↱ Turn</span>
               </button>
               <button
                 onClick={() => {

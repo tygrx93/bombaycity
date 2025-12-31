@@ -51,16 +51,12 @@ import {
   GRID_HEIGHT,
 } from "./types";
 import {
-  ROAD_SEGMENT_SIZE,
-  getRoadSegmentOrigin,
-  hasRoadSegment,
-  getRoadConnections,
-  getSegmentType,
-  generateRoadPattern,
-  getAffectedSegments,
-  canPlaceRoadSegment,
+  ROAD_LANE_SIZE,
+  getRoadLaneOrigin,
+  hasRoadLane,
+  canPlaceRoadLane,
 } from "./roadUtils";
-import { getBuilding, getBuildingFootprint } from "@/app/data/buildings";
+import { getBuilding, getBuildingFootprint, getPropSlots } from "@/app/data/buildings";
 import dynamic from "next/dynamic";
 import type { PhaserGameHandle } from "./phaser/PhaserGame";
 import {
@@ -350,51 +346,9 @@ export default function GameBoard() {
           case ToolType.None: {
             break;
           }
-          case ToolType.RoadNetwork: {
-            const segmentOrigin = getRoadSegmentOrigin(x, y);
-            const placementCheck = canPlaceRoadSegment(
-              grid,
-              segmentOrigin.x,
-              segmentOrigin.y
-            );
-            if (!placementCheck.valid) break;
-
-            for (let dy = 0; dy < ROAD_SEGMENT_SIZE; dy++) {
-              for (let dx = 0; dx < ROAD_SEGMENT_SIZE; dx++) {
-                const px = segmentOrigin.x + dx;
-                const py = segmentOrigin.y + dy;
-                if (px < GRID_WIDTH && py < GRID_HEIGHT) {
-                  grid[py][px].isOrigin = dx === 0 && dy === 0;
-                  grid[py][px].originX = segmentOrigin.x;
-                  grid[py][px].originY = segmentOrigin.y;
-                  grid[py][px].type = TileType.Road;
-                  dirtyTiles.push({ x: px, y: py });
-                }
-              }
-            }
-
-            const affectedSegments = getAffectedSegments(
-              segmentOrigin.x,
-              segmentOrigin.y
-            );
-
-            for (const seg of affectedSegments) {
-              if (!hasRoadSegment(grid, seg.x, seg.y)) continue;
-
-              const connections = getRoadConnections(grid, seg.x, seg.y);
-              const segmentType = getSegmentType(connections);
-              const pattern = generateRoadPattern(segmentType);
-
-              for (const tile of pattern) {
-                const px = seg.x + tile.dx;
-                const py = seg.y + tile.dy;
-                if (px < GRID_WIDTH && py < GRID_HEIGHT) {
-                  grid[py][px].type = tile.type;
-                  dirtyTiles.push({ x: px, y: py });
-                }
-              }
-            }
-            playBuildRoadSound();
+          case ToolType.RoadLane: {
+            // Road lanes are placed via drag callback (handleRoadLaneDrag)
+            // Single-click placement also uses drag callback with single lane
             break;
           }
           case ToolType.Tile: {
@@ -514,6 +468,8 @@ export default function GameBoard() {
             const isDecoration =
               building.category === "props" || building.isDecoration;
             let buildingHasCollision = false;
+            let placingOnPropSlot = false; // Track if placing on building's prop slot
+
             for (
               let dy = 0;
               dy < footprint.height && !buildingHasCollision;
@@ -527,15 +483,21 @@ export default function GameBoard() {
                 const px = bOriginX + dx;
                 const py = bOriginY + dy;
                 if (px < GRID_WIDTH && py < GRID_HEIGHT) {
-                  const cellType = grid[py][px].type;
+                  const cell = grid[py][px];
+                  const cellType = cell.type;
                   if (isDecoration) {
-                    // Decorations can be placed on grass, tile, or snow
+                    // Decorations can be placed on grass, tile, snow, OR building prop slots
                     if (
                       cellType !== TileType.Grass &&
                       cellType !== TileType.Tile &&
                       cellType !== TileType.Snow
                     ) {
-                      buildingHasCollision = true;
+                      // Check if it's a building tile that allows props
+                      if (cellType === TileType.Building && cell.allowsProp && !cell.propId) {
+                        placingOnPropSlot = true;
+                      } else {
+                        buildingHasCollision = true;
+                      }
                     }
                   } else {
                     if (cellType !== TileType.Grass) {
@@ -547,24 +509,41 @@ export default function GameBoard() {
             }
             if (buildingHasCollision) break;
 
+            // Get prop slots for this building (tiles that allow props on top)
+            const propSlots = getPropSlots(building, buildingOrientation);
+            const propSlotSet = new Set(propSlots.map(s => `${s.x},${s.y}`));
+
             for (let dy = 0; dy < footprint.height; dy++) {
               for (let dx = 0; dx < footprint.width; dx++) {
                 const px = bOriginX + dx;
                 const py = bOriginY + dy;
                 if (px < GRID_WIDTH && py < GRID_HEIGHT) {
-                  const underlyingType = isDecoration
-                    ? grid[py][px].type
-                    : undefined;
-                  grid[py][px].type = TileType.Building;
-                  grid[py][px].buildingId = selectedBuildingId;
-                  grid[py][px].isOrigin = dx === 0 && dy === 0;
-                  grid[py][px].originX = bOriginX;
-                  grid[py][px].originY = bOriginY;
-                  if (isDecoration) {
-                    grid[py][px].underlyingTileType = underlyingType;
-                  }
-                  if (building.supportsRotation) {
-                    grid[py][px].buildingOrientation = buildingOrientation;
+                  if (placingOnPropSlot && isDecoration) {
+                    // Placing a prop on a building's prop slot - store in prop layer
+                    grid[py][px].propId = selectedBuildingId;
+                    grid[py][px].propOriginX = bOriginX;
+                    grid[py][px].propOriginY = bOriginY;
+                    if (building.supportsRotation) {
+                      grid[py][px].propOrientation = buildingOrientation;
+                    }
+                  } else {
+                    // Normal placement - modify the tile itself
+                    const underlyingType = isDecoration
+                      ? grid[py][px].type
+                      : undefined;
+                    grid[py][px].type = TileType.Building;
+                    grid[py][px].buildingId = selectedBuildingId;
+                    grid[py][px].isOrigin = dx === 0 && dy === 0;
+                    grid[py][px].originX = bOriginX;
+                    grid[py][px].originY = bOriginY;
+                    if (isDecoration) {
+                      grid[py][px].underlyingTileType = underlyingType;
+                    }
+                    if (building.supportsRotation) {
+                      grid[py][px].buildingOrientation = buildingOrientation;
+                    }
+                    // Mark tiles that allow props on top
+                    grid[py][px].allowsProp = propSlotSet.has(`${dx},${dy}`);
                   }
                   dirtyTiles.push({ x: px, y: py });
                 }
@@ -579,6 +558,39 @@ export default function GameBoard() {
           }
           case ToolType.Eraser: {
             const cell = grid[y][x];
+
+            // First, check if there's a prop on this tile (prop layer)
+            if (cell.propId) {
+              // Clear the prop from all tiles it occupies
+              const propBuilding = getBuilding(cell.propId);
+              if (propBuilding && cell.propOriginX !== undefined && cell.propOriginY !== undefined) {
+                const propFootprint = getBuildingFootprint(propBuilding, cell.propOrientation);
+                for (let dy = 0; dy < propFootprint.height; dy++) {
+                  for (let dx = 0; dx < propFootprint.width; dx++) {
+                    const px = cell.propOriginX + dx;
+                    const py = cell.propOriginY + dy;
+                    if (px < GRID_WIDTH && py < GRID_HEIGHT) {
+                      grid[py][px].propId = undefined;
+                      grid[py][px].propOriginX = undefined;
+                      grid[py][px].propOriginY = undefined;
+                      grid[py][px].propOrientation = undefined;
+                      dirtyTiles.push({ x: px, y: py });
+                    }
+                  }
+                }
+              } else {
+                // Single tile prop - just clear this tile
+                grid[y][x].propId = undefined;
+                grid[y][x].propOriginX = undefined;
+                grid[y][x].propOriginY = undefined;
+                grid[y][x].propOrientation = undefined;
+                dirtyTiles.push({ x, y });
+              }
+              playDestructionSound();
+              phaserGameRef.current?.shakeScreen("x", 0.4, 100);
+              break;
+            }
+
             const originX = cell.originX;
             const originY = cell.originY;
             const cellType = cell.type;
@@ -586,17 +598,15 @@ export default function GameBoard() {
             const shouldPlaySound = cellType !== TileType.Grass;
 
             if (originX !== undefined && originY !== undefined) {
-              const isRoadSegment =
-                hasRoadSegment(grid, originX, originY) &&
-                (cellType === TileType.Road || cellType === TileType.Asphalt);
+              // Road lane deletion (2x2) - handles both RoadLane and RoadTurn
+              const isRoadTile =
+                hasRoadLane(grid, originX, originY) &&
+                (cellType === TileType.RoadLane || cellType === TileType.RoadTurn);
 
-              if (isRoadSegment) {
-                const neighbors = getAffectedSegments(originX, originY).filter(
-                  (seg) => seg.x !== originX || seg.y !== originY
-                );
-
-                for (let dy = 0; dy < ROAD_SEGMENT_SIZE; dy++) {
-                  for (let dx = 0; dx < ROAD_SEGMENT_SIZE; dx++) {
+              if (isRoadTile) {
+                // Delete the 2x2 road lane
+                for (let dy = 0; dy < ROAD_LANE_SIZE; dy++) {
+                  for (let dx = 0; dx < ROAD_LANE_SIZE; dx++) {
                     const px = originX + dx;
                     const py = originY + dy;
                     if (px < GRID_WIDTH && py < GRID_HEIGHT) {
@@ -604,23 +614,7 @@ export default function GameBoard() {
                       grid[py][px].isOrigin = true;
                       grid[py][px].originX = undefined;
                       grid[py][px].originY = undefined;
-                      dirtyTiles.push({ x: px, y: py });
-                    }
-                  }
-                }
-
-                for (const seg of neighbors) {
-                  if (!hasRoadSegment(grid, seg.x, seg.y)) continue;
-
-                  const connections = getRoadConnections(grid, seg.x, seg.y);
-                  const segmentType = getSegmentType(connections);
-                  const pattern = generateRoadPattern(segmentType);
-
-                  for (const tile of pattern) {
-                    const px = seg.x + tile.dx;
-                    const py = seg.y + tile.dy;
-                    if (px < GRID_WIDTH && py < GRID_HEIGHT) {
-                      grid[py][px].type = tile.type;
+                      grid[py][px].laneDirection = undefined;
                       dirtyTiles.push({ x: px, y: py });
                     }
                   }
@@ -628,7 +622,6 @@ export default function GameBoard() {
 
                 if (shouldPlaySound) {
                   playDestructionSound();
-                  // Horizontal shake on deletion
                   phaserGameRef.current?.shakeScreen("x", 0.6, 150);
                 }
               } else {
@@ -659,6 +652,12 @@ export default function GameBoard() {
                       grid[py][px].isOrigin = true;
                       grid[py][px].originX = undefined;
                       grid[py][px].originY = undefined;
+                      // Clear prop slot and prop layer fields
+                      grid[py][px].allowsProp = undefined;
+                      grid[py][px].propId = undefined;
+                      grid[py][px].propOriginX = undefined;
+                      grid[py][px].propOriginY = undefined;
+                      grid[py][px].propOrientation = undefined;
                       dirtyTiles.push({ x: px, y: py });
                     }
                   }
@@ -778,33 +777,31 @@ export default function GameBoard() {
     [selectedTool]
   );
 
-  // Handle batch road segment placement from drag operations
-  const handleRoadDrag = useCallback(
-    (segments: Array<{ x: number; y: number }>) => {
-      if (segments.length === 0) return;
+  // Handle road lane placement from drag operations (new 2x2 lane system)
+  const handleRoadLaneDrag = useCallback(
+    (lanes: Array<{ x: number; y: number }>, direction: Direction, tileType: TileType) => {
+      if (lanes.length === 0) return;
 
       // Direct mutation - no copy!
       const grid = gridRef.current;
       const dirtyTiles: Array<{ x: number; y: number }> = [];
 
-      // Place all road segments
-      for (const { x: segmentX, y: segmentY } of segments) {
-        const placementCheck = canPlaceRoadSegment(
-          grid,
-          segmentX,
-          segmentY
-        );
+      // Place all road lanes
+      for (const { x: laneX, y: laneY } of lanes) {
+        const placementCheck = canPlaceRoadLane(grid, laneX, laneY);
         if (!placementCheck.valid) continue;
 
-        for (let dy = 0; dy < ROAD_SEGMENT_SIZE; dy++) {
-          for (let dx = 0; dx < ROAD_SEGMENT_SIZE; dx++) {
-            const px = segmentX + dx;
-            const py = segmentY + dy;
+        // Place 2x2 road lane (RoadLane or RoadTurn)
+        for (let dy = 0; dy < ROAD_LANE_SIZE; dy++) {
+          for (let dx = 0; dx < ROAD_LANE_SIZE; dx++) {
+            const px = laneX + dx;
+            const py = laneY + dy;
             if (px < GRID_WIDTH && py < GRID_HEIGHT) {
+              grid[py][px].type = tileType;
               grid[py][px].isOrigin = dx === 0 && dy === 0;
-              grid[py][px].originX = segmentX;
-              grid[py][px].originY = segmentY;
-              grid[py][px].type = TileType.Road;
+              grid[py][px].originX = laneX;
+              grid[py][px].originY = laneY;
+              grid[py][px].laneDirection = direction;
               dirtyTiles.push({ x: px, y: py });
             }
           }
@@ -812,33 +809,6 @@ export default function GameBoard() {
       }
 
       if (dirtyTiles.length > 0) {
-        // Update all affected segments (including neighbors)
-        const allAffectedSegments = new Set<string>();
-        for (const { x: segmentX, y: segmentY } of segments) {
-          const affectedSegments = getAffectedSegments(segmentX, segmentY);
-          for (const seg of affectedSegments) {
-            allAffectedSegments.add(`${seg.x},${seg.y}`);
-          }
-        }
-
-        for (const segKey of allAffectedSegments) {
-          const [segX, segY] = segKey.split(",").map(Number);
-          if (!hasRoadSegment(grid, segX, segY)) continue;
-
-          const connections = getRoadConnections(grid, segX, segY);
-          const segmentType = getSegmentType(connections);
-          const pattern = generateRoadPattern(segmentType);
-
-          for (const tile of pattern) {
-            const px = segX + tile.dx;
-            const py = segY + tile.dy;
-            if (px < GRID_WIDTH && py < GRID_HEIGHT) {
-              grid[py][px].type = tile.type;
-              dirtyTiles.push({ x: px, y: py });
-            }
-          }
-        }
-
         phaserGameRef.current?.markTilesDirty(dirtyTiles);
         playBuildRoadSound();
         forceGridUpdate();
@@ -869,53 +839,21 @@ export default function GameBoard() {
 
         const cellType = cell.type;
 
-        if (cellType === TileType.Road || cellType === TileType.Asphalt) {
-          const isRoadSegment = hasRoadSegment(grid, originX, originY);
-
-          if (isRoadSegment) {
-            // Delete road segment
-            const neighbors = getAffectedSegments(originX, originY).filter(
-              (seg) => seg.x !== originX || seg.y !== originY
-            );
-
-            for (let dy = 0; dy < ROAD_SEGMENT_SIZE; dy++) {
-              for (let dx = 0; dx < ROAD_SEGMENT_SIZE; dx++) {
-                const px = originX + dx;
-                const py = originY + dy;
-                if (px < GRID_WIDTH && py < GRID_HEIGHT) {
-                  grid[py][px].type = TileType.Grass;
-                  grid[py][px].isOrigin = true;
-                  grid[py][px].originX = undefined;
-                  grid[py][px].originY = undefined;
-                  dirtyTiles.push({ x: px, y: py });
-                }
+        if (cellType === TileType.RoadLane) {
+          // Delete road lane (2x2)
+          for (let dy = 0; dy < ROAD_LANE_SIZE; dy++) {
+            for (let dx = 0; dx < ROAD_LANE_SIZE; dx++) {
+              const px = originX + dx;
+              const py = originY + dy;
+              if (px < GRID_WIDTH && py < GRID_HEIGHT) {
+                grid[py][px].type = TileType.Grass;
+                grid[py][px].isOrigin = true;
+                grid[py][px].originX = undefined;
+                grid[py][px].originY = undefined;
+                grid[py][px].laneDirection = undefined;
+                dirtyTiles.push({ x: px, y: py });
               }
             }
-
-            // Update neighboring road segments
-            for (const seg of neighbors) {
-              if (!hasRoadSegment(grid, seg.x, seg.y)) continue;
-
-              const connections = getRoadConnections(grid, seg.x, seg.y);
-              const segmentType = getSegmentType(connections);
-              const pattern = generateRoadPattern(segmentType);
-
-              for (const tile of pattern) {
-                const px = seg.x + tile.dx;
-                const py = seg.y + tile.dy;
-                if (px < GRID_WIDTH && py < GRID_HEIGHT) {
-                  grid[py][px].type = tile.type;
-                  dirtyTiles.push({ x: px, y: py });
-                }
-              }
-            }
-          } else {
-            // Single tile
-            grid[y][x].type = TileType.Grass;
-            grid[y][x].isOrigin = true;
-            grid[y][x].originX = undefined;
-            grid[y][x].originY = undefined;
-            dirtyTiles.push({ x, y });
           }
         } else if (cellType === TileType.Building && cell.buildingId) {
           // Delete building
@@ -994,16 +932,8 @@ export default function GameBoard() {
           itemsToDelete.add(
             `building:${originKey}:${building?.name || "Building"}`
           );
-        } else if (
-          cell.type === TileType.Road ||
-          cell.type === TileType.Asphalt
-        ) {
-          const isRoadSegment = hasRoadSegment(grid, originX, originY);
-          if (isRoadSegment) {
-            itemsToDelete.add(`road:${originKey}`);
-          } else {
-            itemsToDelete.add(`tile:${x},${y}`);
-          }
+        } else if (cell.type === TileType.RoadLane) {
+          itemsToDelete.add(`roadlane:${originKey}`);
         } else {
           itemsToDelete.add(`tile:${x},${y}`);
         }
@@ -1052,7 +982,7 @@ export default function GameBoard() {
         setModalState({
           isVisible: true,
           title: "Cannot Spawn Car",
-          message: "Please place some roads with asphalt first!",
+          message: "Please place some road lanes first!",
         });
       }
     }
@@ -1774,7 +1704,7 @@ export default function GameBoard() {
             onTileClick={handleTileClick}
             onTilesDrag={handleTilesDrag}
             onEraserDrag={handleEraserDrag}
-            onRoadDrag={handleRoadDrag}
+            onRoadLaneDrag={handleRoadLaneDrag}
             onZoomChange={handleZoomChange}
             showPaths={debugPaths}
             showStats={showStats}
