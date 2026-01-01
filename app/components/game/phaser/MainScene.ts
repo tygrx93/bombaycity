@@ -43,6 +43,7 @@ import {
 } from "@/app/data/buildings";
 import { loadGifAsAnimation, playGifAnimation } from "./GifLoader";
 import { TrafficManager } from "./TrafficManager";
+import { TrafficLightManager, Intersection } from "./TrafficLightManager";
 
 // Event types for React communication
 export interface SceneEvents {
@@ -115,6 +116,8 @@ export class MainScene extends Phaser.Scene {
   private grid: GridCell[][] = [];
   private characters: Character[] = [];
   private trafficManager: TrafficManager = new TrafficManager();
+  private trafficLightManager: TrafficLightManager = new TrafficLightManager();
+  private trafficLightIndicators: Phaser.GameObjects.Graphics | null = null;
 
   // Tool state (synced from React)
   private selectedTool: ToolType = ToolType.RoadLane;
@@ -308,6 +311,9 @@ export class MainScene extends Phaser.Scene {
     // Set world bounds for camera (world is larger than viewport)
     this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
+    // Connect traffic light manager to traffic manager
+    this.trafficManager.setTrafficLightManager(this.trafficLightManager);
+
     // Mark scene as ready
     this.isReady = true;
 
@@ -499,7 +505,11 @@ export class MainScene extends Phaser.Scene {
 
     // Update game entities
     this.updateCharacters();
+    this.trafficLightManager.update();
     this.trafficManager.update();
+
+    // Render traffic light indicators
+    this.renderTrafficLights();
 
     // Center camera on first frame (camera dimensions now known)
     if (this.needsCameraCenter) {
@@ -1203,6 +1213,7 @@ export class MainScene extends Phaser.Scene {
     // Update grid reference (React now tells us what changed via markTilesDirty)
     this.grid = newGrid;
     this.trafficManager.setGrid(newGrid);
+    this.trafficLightManager.setGrid(newGrid);
 
     if (this.gridDirtyTiles.size > 0) {
       this.gridDirty = true;
@@ -2242,6 +2253,74 @@ export class MainScene extends Phaser.Scene {
       [Direction.Right]: "e",
     };
     return `${carType}_${dirMap[direction]}`;
+  }
+
+  // Render traffic light indicators at intersections
+  private renderTrafficLights(): void {
+    // Clear previous indicators
+    if (this.trafficLightIndicators) {
+      this.trafficLightIndicators.destroy();
+    }
+
+    const intersections = this.trafficLightManager.getIntersections();
+    if (intersections.length === 0) return;
+
+    const graphics = this.add.graphics();
+    graphics.setDepth(1_500_000); // Above buildings but below UI
+
+    for (const intersection of intersections) {
+      // Draw indicator at intersection center
+      const screenPos = this.gridToScreen(intersection.centerX, intersection.centerY);
+
+      // Get colors for NS and EW directions
+      const nsColor = this.getTrafficLightColor(intersection, true);
+      const ewColor = this.getTrafficLightColor(intersection, false);
+
+      // Draw NS indicator (vertical bar above)
+      graphics.fillStyle(nsColor, 0.9);
+      graphics.fillCircle(screenPos.x, screenPos.y - 20, 6);
+
+      // Draw EW indicator (horizontal bar below)
+      graphics.fillStyle(ewColor, 0.9);
+      graphics.fillCircle(screenPos.x, screenPos.y - 8, 6);
+
+      // Draw outline
+      graphics.lineStyle(1, 0x000000, 0.5);
+      graphics.strokeCircle(screenPos.x, screenPos.y - 20, 6);
+      graphics.strokeCircle(screenPos.x, screenPos.y - 8, 6);
+
+      // Label (NS/EW)
+      // Could add text labels here if needed
+    }
+
+    this.trafficLightIndicators = graphics;
+  }
+
+  private getTrafficLightColor(intersection: Intersection, isNorthSouth: boolean): number {
+    const phase = intersection.phase;
+
+    if (isNorthSouth) {
+      // North-South direction
+      switch (phase) {
+        case "ns_green": return 0x00ff00;  // Green
+        case "ns_yellow": return 0xffff00; // Yellow
+        case "all_red_1": return 0xff0000; // Red
+        case "ew_green": return 0xff0000;  // Red
+        case "ew_yellow": return 0xff0000; // Red
+        case "all_red_2": return 0xff0000; // Red
+      }
+    } else {
+      // East-West direction
+      switch (phase) {
+        case "ns_green": return 0xff0000;  // Red
+        case "ns_yellow": return 0xff0000; // Red
+        case "all_red_1": return 0xff0000; // Red
+        case "ew_green": return 0x00ff00;  // Green
+        case "ew_yellow": return 0xffff00; // Yellow
+        case "all_red_2": return 0xff0000; // Red
+      }
+    }
+    return 0xff0000; // Default red
   }
 
   private renderCharacters(): void {

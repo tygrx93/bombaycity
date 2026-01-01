@@ -28,6 +28,7 @@ import {
   leftTurnDirection,
   isRoadTileType,
 } from "../roadUtils";
+import { TrafficLightManager } from "./TrafficLightManager";
 
 // Generate unique ID
 const generateId = () => Math.random().toString(36).substring(2, 9);
@@ -38,12 +39,18 @@ const SPAWN_CAR_TYPES = [CarType.Jeep, CarType.Taxi, CarType.Waymo, CarType.Robo
 export class TrafficManager {
   private cars: Car[] = [];
   private grid: GridCell[][] = [];
+  private trafficLightManager: TrafficLightManager | null = null;
 
   constructor() {}
 
   // Update grid reference (called when grid changes)
   setGrid(grid: GridCell[][]): void {
     this.grid = grid;
+  }
+
+  // Set traffic light manager reference
+  setTrafficLightManager(manager: TrafficLightManager): void {
+    this.trafficLightManager = manager;
   }
 
   // Get all cars (for rendering)
@@ -208,6 +215,21 @@ export class TrafficManager {
       return { ...car, waiting: Math.min(waiting + 1, 120) };
     }
 
+    // Check if there's a red light ahead (we'll use this later to prevent crossing)
+    let redLightAhead = false;
+    let stopLineCenter: { x: number; y: number } | null = null;
+
+    if (currentLane.type === TileType.RoadLane && this.trafficLightManager) {
+      const nextLane = this.getNextLane(currentLane.originX, currentLane.originY, direction);
+      if (nextLane && nextLane.type === TileType.RoadTurn) {
+        const canProceed = this.trafficLightManager.canProceed(nextLane.originX, nextLane.originY, direction);
+        if (!canProceed) {
+          redLightAhead = true;
+          stopLineCenter = this.getLaneCenter(currentLane.originX, currentLane.originY);
+        }
+      }
+    }
+
     // Reset waiting counter
     const newWaiting = waiting > 0 ? 0 : waiting;
 
@@ -294,6 +316,17 @@ export class TrafficManager {
     nextX += moveVec.dx * speed;
     nextY += moveVec.dy * speed;
 
+    // If red light ahead, don't let car cross the stop line
+    if (redLightAhead && stopLineCenter) {
+      // Check if car would cross past the stop line (lane center) OR is already at it
+      const atStopLine = Math.abs(x - stopLineCenter.x) < 0.1 && Math.abs(y - stopLineCenter.y) < 0.1;
+      const wouldCross = this.wouldCrossStopLine(x, y, nextX, nextY, stopLineCenter, newDirection);
+      if (atStopLine || wouldCross) {
+        // Stay at stop line - car waits for green
+        return { ...car, x: stopLineCenter.x, y: stopLineCenter.y, direction: newDirection, waiting: Math.min(waiting + 1, 120) };
+      }
+    }
+
     // Verify still on road after move
     const newLane = this.getLaneAt(nextX, nextY);
     if (!newLane) {
@@ -302,6 +335,26 @@ export class TrafficManager {
     }
 
     return { ...car, x: nextX, y: nextY, direction: newDirection, waiting: newWaiting };
+  }
+
+  // Check if movement would cross the stop line
+  private wouldCrossStopLine(
+    fromX: number, fromY: number,
+    toX: number, toY: number,
+    stopLine: { x: number; y: number },
+    direction: Direction
+  ): boolean {
+    // Check based on direction of travel
+    switch (direction) {
+      case Direction.Right:
+        return fromX < stopLine.x && toX >= stopLine.x;
+      case Direction.Left:
+        return fromX > stopLine.x && toX <= stopLine.x;
+      case Direction.Down:
+        return fromY < stopLine.y && toY >= stopLine.y;
+      case Direction.Up:
+        return fromY > stopLine.y && toY <= stopLine.y;
+    }
   }
 
   // Pick next direction at a lane (used when car can't go straight)
