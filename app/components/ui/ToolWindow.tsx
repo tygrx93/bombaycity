@@ -405,36 +405,6 @@ export default function ToolWindow({
               </button>
               <button
                 onClick={() => {
-                  onToolSelect(ToolType.SidewalklessRoad);
-                  playClickSound();
-                }}
-                className={`rct-button ${
-                  selectedTool === ToolType.SidewalklessRoad ? "active" : ""
-                }`}
-                title="Road without Sidewalks"
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  padding: 8,
-                  minHeight: 60,
-                }}
-              >
-                <img
-                  src="/Tiles/1x1asphalt.png"
-                  alt="No Sidewalk"
-                  style={{
-                    width: 40,
-                    height: 40,
-                    objectFit: "contain",
-                    imageRendering: "pixelated",
-                  }}
-                />
-                <span style={{ fontSize: 10, marginTop: 4 }}>No Walk</span>
-              </button>
-              <button
-                onClick={() => {
                   onToolSelect(ToolType.Asphalt);
                   playClickSound();
                 }}

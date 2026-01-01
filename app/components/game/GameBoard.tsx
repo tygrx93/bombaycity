@@ -890,6 +890,7 @@ export default function GameBoard() {
       const grid = gridRef.current;
       const dirtyTiles: Array<{ x: number; y: number }> = [];
       const deletedTiles = new Set<string>();
+      const deletedLots = new Set<string>(); // Track deleted lots for neighbor recalculation
 
       for (const { x, y } of tiles) {
         if (x < 0 || x >= GRID_WIDTH || y < 0 || y >= GRID_HEIGHT) continue;
@@ -904,23 +905,28 @@ export default function GameBoard() {
                            cellType === TileType.Sidewalk;
 
         if (isRoadInfra) {
-          // Use getConnectedRoadTiles for consistent road chunk deletion
-          const chunkTiles = phaserGameRef.current?.getConnectedRoadTiles(x, y) ?? [{ x, y }];
-          for (const pos of chunkTiles) {
-            const key = `${pos.x},${pos.y}`;
-            if (deletedTiles.has(key)) continue;
-            deletedTiles.add(key);
+          // LOT-BASED DELETION: Delete entire 8x8 lot
+          const lotOrigin = getLotOrigin(x, y);
+          const lotKey = `${lotOrigin.x},${lotOrigin.y}`;
 
-            if (pos.x >= 0 && pos.x < GRID_WIDTH && pos.y >= 0 && pos.y < GRID_HEIGHT) {
-              const c = grid[pos.y][pos.x];
-              if (c.type !== TileType.Grass) {
-                grid[pos.y][pos.x].type = TileType.Grass;
-                grid[pos.y][pos.x].isOrigin = true;
-                grid[pos.y][pos.x].originX = undefined;
-                grid[pos.y][pos.x].originY = undefined;
-                grid[pos.y][pos.x].laneDirection = undefined;
-                grid[pos.y][pos.x].buildingId = undefined;
-                dirtyTiles.push({ x: pos.x, y: pos.y });
+          if (deletedLots.has(lotKey)) continue;
+          deletedLots.add(lotKey);
+
+          // Clear the entire lot
+          for (let dy = 0; dy < LOT_SIZE; dy++) {
+            for (let dx = 0; dx < LOT_SIZE; dx++) {
+              const px = lotOrigin.x + dx;
+              const py = lotOrigin.y + dy;
+              const key = `${px},${py}`;
+              if (deletedTiles.has(key)) continue;
+              deletedTiles.add(key);
+
+              if (px >= 0 && px < GRID_WIDTH && py >= 0 && py < GRID_HEIGHT) {
+                const c = grid[py][px];
+                if (c.type !== TileType.Grass) {
+                  grid[py][px] = { type: TileType.Grass, x: px, y: py };
+                  dirtyTiles.push({ x: px, y: py });
+                }
               }
             }
           }
@@ -959,6 +965,30 @@ export default function GameBoard() {
           grid[y][x].originX = undefined;
           grid[y][x].originY = undefined;
           dirtyTiles.push({ x, y });
+        }
+      }
+
+      // Recalculate neighbors of deleted road lots
+      if (deletedLots.size > 0) {
+        for (const lotKey of deletedLots) {
+          const [lotX, lotY] = lotKey.split(",").map(Number);
+          // Check and recalculate each adjacent lot
+          const neighbors = [
+            { x: lotX - LOT_SIZE, y: lotY },  // West
+            { x: lotX + LOT_SIZE, y: lotY },  // East
+            { x: lotX, y: lotY - LOT_SIZE },  // North
+            { x: lotX, y: lotY + LOT_SIZE },  // South
+          ];
+          for (const neighbor of neighbors) {
+            if (neighbor.x < 0 || neighbor.x >= GRID_WIDTH || neighbor.y < 0 || neighbor.y >= GRID_HEIGHT) continue;
+            // Check if this neighbor lot has road tiles
+            const centerCell = grid[neighbor.y + LOT_SIZE / 2]?.[neighbor.x + LOT_SIZE / 2];
+            if (centerCell && (centerCell.type === TileType.RoadLane || centerCell.type === TileType.RoadTurn)) {
+              // Recalculate this lot
+              const neighborTiles = placeRoadLot(grid, neighbor.x, neighbor.y);
+              dirtyTiles.push(...neighborTiles);
+            }
+          }
         }
       }
 
