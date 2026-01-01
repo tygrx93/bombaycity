@@ -185,7 +185,8 @@ export class TrafficLightManager {
     }
 
     // Group adjacent turn tiles into intersections
-    // Two turn tiles are part of the same intersection if they're within 2*ROAD_LANE_SIZE of each other
+    // Be generous - any turn tiles that touch or are close should be grouped
+    // This handles partial overlaps, messy placements, etc.
     const visited = new Set<string>();
 
     for (const tile of turnTiles) {
@@ -201,16 +202,24 @@ export class TrafficLightManager {
         const current = queue.shift()!;
         intersectionTiles.push(current);
 
-        // Check all adjacent lane positions
+        // Check all other turn tiles for adjacency
         for (const other of turnTiles) {
           const otherKey = `${other.x},${other.y}`;
           if (visited.has(otherKey)) continue;
 
-          // Check if adjacent (within one lane width in any direction)
+          // More generous adjacency check:
+          // - Direct neighbors (sharing edge): dx or dy <= ROAD_LANE_SIZE
+          // - Diagonal neighbors (sharing corner): both dx and dy <= ROAD_LANE_SIZE * 2
+          // - Close enough to be same intersection: within 3 lane widths
           const dx = Math.abs(other.x - current.x);
           const dy = Math.abs(other.y - current.y);
 
-          if (dx <= ROAD_LANE_SIZE * 2 && dy <= ROAD_LANE_SIZE * 2) {
+          // Connected if: touching, overlapping, or within 3 lanes of each other
+          const touching = (dx <= ROAD_LANE_SIZE && dy <= ROAD_LANE_SIZE * 3) ||
+                          (dy <= ROAD_LANE_SIZE && dx <= ROAD_LANE_SIZE * 3);
+          const closeEnough = dx <= ROAD_LANE_SIZE * 3 && dy <= ROAD_LANE_SIZE * 3;
+
+          if (touching || closeEnough) {
             visited.add(otherKey);
             queue.push(other);
           }
@@ -221,7 +230,13 @@ export class TrafficLightManager {
       const hasNS = intersectionTiles.some(t => t.dir === Direction.Up || t.dir === Direction.Down);
       const hasEW = intersectionTiles.some(t => t.dir === Direction.Left || t.dir === Direction.Right);
 
-      if (hasNS && hasEW && intersectionTiles.length >= 2) {
+      // Count actual road approaches (RoadLane tiles leading into this intersection)
+      // A corner has 2 approaches - no traffic light needed
+      // An intersection has 3-4 approaches - needs traffic light
+      const approachCount = this.countRoadApproaches(intersectionTiles);
+
+      // Only create traffic light if 3+ approaches (true intersection, not corner)
+      if (hasNS && hasEW && intersectionTiles.length >= 2 && approachCount >= 3) {
         // Calculate center and bounds
         const centerX = intersectionTiles.reduce((sum, t) => sum + t.x + ROAD_LANE_SIZE / 2, 0) / intersectionTiles.length;
         const centerY = intersectionTiles.reduce((sum, t) => sum + t.y + ROAD_LANE_SIZE / 2, 0) / intersectionTiles.length;
@@ -301,6 +316,55 @@ export class TrafficLightManager {
         }
       }
     }
+  }
+
+  // Count how many road approaches lead into an intersection
+  // Scans for RoadLane tiles in each cardinal direction outside the intersection bounds
+  // More robust: checks multiple positions and depths to catch any connected roads
+  private countRoadApproaches(intersectionTiles: Array<{ x: number; y: number; dir: Direction }>): number {
+    // Find bounds of intersection (with padding for safety)
+    const minX = Math.min(...intersectionTiles.map(t => t.x));
+    const maxX = Math.max(...intersectionTiles.map(t => t.x)) + ROAD_LANE_SIZE;
+    const minY = Math.min(...intersectionTiles.map(t => t.y));
+    const maxY = Math.max(...intersectionTiles.map(t => t.y)) + ROAD_LANE_SIZE;
+
+    // Helper to check if any RoadLane exists in an area
+    const hasRoadInArea = (startX: number, endX: number, startY: number, endY: number): boolean => {
+      for (let y = startY; y < endY; y++) {
+        for (let x = startX; x < endX; x++) {
+          const cell = this.grid[y]?.[x];
+          if (cell?.type === TileType.RoadLane) {
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+
+    let approaches = 0;
+    const searchDepth = ROAD_LANE_SIZE * 2; // Check 2 lanes out
+
+    // North approach: check area above intersection
+    if (hasRoadInArea(minX - ROAD_LANE_SIZE, maxX + ROAD_LANE_SIZE, minY - searchDepth, minY)) {
+      approaches++;
+    }
+
+    // South approach: check area below intersection
+    if (hasRoadInArea(minX - ROAD_LANE_SIZE, maxX + ROAD_LANE_SIZE, maxY, maxY + searchDepth)) {
+      approaches++;
+    }
+
+    // West approach: check area left of intersection
+    if (hasRoadInArea(minX - searchDepth, minX, minY - ROAD_LANE_SIZE, maxY + ROAD_LANE_SIZE)) {
+      approaches++;
+    }
+
+    // East approach: check area right of intersection
+    if (hasRoadInArea(maxX, maxX + searchDepth, minY - ROAD_LANE_SIZE, maxY + ROAD_LANE_SIZE)) {
+      approaches++;
+    }
+
+    return approaches;
   }
 
   // ============================================

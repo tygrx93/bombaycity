@@ -15,6 +15,9 @@ import {
   TileIndex,
   ToolType,
   ROAD_LANE_SIZE,
+  LOT_SIZE,
+  getLotOrigin,
+  getLotTiles,
 } from "../types";
 import {
   GRID_OFFSET_X,
@@ -1626,6 +1629,90 @@ export class MainScene extends Phaser.Scene {
     return cell?.type === TileType.Sidewalk || cell?.type === TileType.Tile || cell?.type === TileType.Cobblestone;
   }
 
+  // Find the road "chunk" at a position for eraser preview/deletion
+  // Uses lot-based system: roads are placed in 8x8 lot chunks
+  // This makes deletion predictable - just delete all road infrastructure in the lot
+  public getConnectedRoadTiles(startX: number, startY: number): Array<{ x: number; y: number }> {
+    const result: Array<{ x: number; y: number }> = [];
+    const cell = this.grid[startY]?.[startX];
+    if (!cell) return [{ x: startX, y: startY }];
+
+    // Check if this is road infrastructure
+    if (!this.isRoadOrSidewalk(startX, startY)) {
+      return [{ x: startX, y: startY }];
+    }
+
+    // Get the lot containing this position
+    const lotOrigin = getLotOrigin(startX, startY);
+    const lotTiles = getLotTiles(lotOrigin.x, lotOrigin.y);
+
+    // Return all road infrastructure tiles within the lot
+    for (const tile of lotTiles) {
+      if (this.isRoadOrSidewalk(tile.x, tile.y)) {
+        result.push(tile);
+      }
+    }
+
+    return result.length > 0 ? result : [{ x: startX, y: startY }];
+  }
+
+  // Helper: check if position is road infrastructure (lane, turn, or sidewalk)
+  private isRoadOrSidewalk(x: number, y: number): boolean {
+    if (x < 0 || x >= GRID_WIDTH || y < 0 || y >= GRID_HEIGHT) return false;
+    const c = this.grid[y]?.[x];
+    return c?.type === TileType.RoadLane || c?.type === TileType.RoadTurn || c?.type === TileType.Sidewalk;
+  }
+
+  // Helper: check if position is a turn tile
+  private isTurnTile(x: number, y: number): boolean {
+    if (x < 0 || x >= GRID_WIDTH || y < 0 || y >= GRID_HEIGHT) return false;
+    return this.grid[y]?.[x]?.type === TileType.RoadTurn;
+  }
+
+  // Helper: check if position has adjacent turn tile
+  private hasAdjacentTurn(x: number, y: number): boolean {
+    for (let d = 1; d <= 4; d++) {
+      for (const [dx, dy] of [[d,0],[-d,0],[0,d],[0,-d]]) {
+        if (this.isTurnTile(x + dx, y + dy)) return true;
+      }
+    }
+    return false;
+  }
+
+  // Helper: check if a lot contains a horizontal road (lanes at Y = lotY + 2, 4)
+  private hasHorizontalRoadInLot(lotX: number, lotY: number): boolean {
+    // Check if any horizontal road lanes exist in this lot
+    // Horizontal roads have lanes going Left or Right
+    for (let dx = 0; dx < LOT_SIZE; dx += ROAD_LANE_SIZE) {
+      const cell = this.grid[lotY + ROAD_LANE_SIZE]?.[lotX + dx];
+      if (cell && isRoadTileType(cell.type)) {
+        const originCell = this.grid[cell.originY ?? (lotY + ROAD_LANE_SIZE)]?.[cell.originX ?? (lotX + dx)];
+        const dir = originCell?.laneDirection;
+        if (dir === Direction.Left || dir === Direction.Right) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // Helper: check if a lot contains a vertical road (lanes at X = lotX + 2, 4)
+  private hasVerticalRoadInLot(lotX: number, lotY: number): boolean {
+    // Check if any vertical road lanes exist in this lot
+    // Vertical roads have lanes going Up or Down
+    for (let dy = 0; dy < LOT_SIZE; dy += ROAD_LANE_SIZE) {
+      const cell = this.grid[lotY + dy]?.[lotX + ROAD_LANE_SIZE];
+      if (cell && isRoadTileType(cell.type)) {
+        const originCell = this.grid[cell.originY ?? (lotY + dy)]?.[cell.originX ?? (lotX + ROAD_LANE_SIZE)];
+        const dir = originCell?.laneDirection;
+        if (dir === Direction.Up || dir === Direction.Down) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   // Get the tile index for a grid cell
   // Handles road edge detection for sidewalk borders
   private getTileIndexForCell(cell: GridCell, x: number, y: number): number {
@@ -2936,48 +3023,72 @@ export class MainScene extends Phaser.Scene {
           const originY = cell.originY ?? ty;
           const cellType = cell.type;
 
-          // Check if this is a road lane
-          const isRoadLane =
-            originX % ROAD_LANE_SIZE === 0 &&
-            originY % ROAD_LANE_SIZE === 0 &&
-            cellType === TileType.RoadLane;
+          // Check if this is a road tile (lane or turn)
+          const isRoadTile = cellType === TileType.RoadLane || cellType === TileType.RoadTurn;
 
-          if (isRoadLane) {
-            // Show entire road lane (2x2)
-            for (let dy = 0; dy < ROAD_LANE_SIZE; dy++) {
-              for (let dx = 0; dx < ROAD_LANE_SIZE; dx++) {
-                const px = originX + dx;
-                const py = originY + dy;
-                if (
-                  px < GRID_WIDTH &&
-                  py < GRID_HEIGHT &&
-                  !previewedTiles.has(`${px},${py}`)
-                ) {
-                  previewedTiles.add(`${px},${py}`);
-                  const tileCell = this.grid[py]?.[px];
-                  if (tileCell && tileCell.type !== TileType.Grass) {
-                    const screenPos = this.gridToScreen(px, py);
-                    const preview = this.add.image(
+          if (isRoadTile) {
+            // Find all connected road tiles (lanes, turns, and adjacent sidewalks)
+            const connectedTiles = this.getConnectedRoadTiles(tx, ty);
+
+            for (const pos of connectedTiles) {
+              if (!previewedTiles.has(`${pos.x},${pos.y}`)) {
+                previewedTiles.add(`${pos.x},${pos.y}`);
+                const tileCell = this.grid[pos.y]?.[pos.x];
+                if (tileCell && tileCell.type !== TileType.Grass) {
+                  const screenPos = this.gridToScreen(pos.x, pos.y);
+                  const preview = this.add.image(
+                    screenPos.x,
+                    screenPos.y,
+                    "asphalt"
+                  );
+                  preview.setOrigin(0.5, 0);
+                  preview.setScale(
+                    SUBTILE_WIDTH / preview.width,
+                    SUBTILE_HEIGHT / preview.height
+                  );
+                  preview.setAlpha(0.7);
+                  preview.setTint(0xff0000);
+                  preview.setDepth(
+                    this.depthFromSortPoint(
                       screenPos.x,
                       screenPos.y,
-                      "asphalt"
-                    );
-                    preview.setOrigin(0.5, 0);
-                    preview.setScale(
-                      SUBTILE_WIDTH / preview.width,
-                      SUBTILE_HEIGHT / preview.height
-                    );
-                    preview.setAlpha(0.7);
-                    preview.setTint(0xff0000);
-                    preview.setDepth(
-                      this.depthFromSortPoint(
-                        screenPos.x,
-                        screenPos.y,
-                        1_000_000
-                      )
-                    );
-                    this.previewSprites.push(preview);
-                  }
+                      1_000_000
+                    )
+                  );
+                  this.previewSprites.push(preview);
+                }
+              }
+            }
+          } else if (cellType === TileType.Sidewalk) {
+            // For sidewalk, find and show the entire road strip it belongs to
+            const connectedTiles = this.getConnectedRoadTiles(tx, ty);
+
+            for (const pos of connectedTiles) {
+              if (!previewedTiles.has(`${pos.x},${pos.y}`)) {
+                previewedTiles.add(`${pos.x},${pos.y}`);
+                const tileCell = this.grid[pos.y]?.[pos.x];
+                if (tileCell && tileCell.type !== TileType.Grass) {
+                  const screenPos = this.gridToScreen(pos.x, pos.y);
+                  const preview = this.add.image(
+                    screenPos.x,
+                    screenPos.y,
+                    tileCell.type === TileType.Sidewalk ? "sidewalk" : "asphalt"
+                  );
+                  preview.setOrigin(0.5, 0);
+                  preview.setScale(
+                    SUBTILE_WIDTH / preview.width,
+                    SUBTILE_HEIGHT / preview.height
+                  );
+                  preview.setAlpha(0.7);
+                  preview.setTint(0xff0000);
+                  preview.setDepth(
+                    this.depthFromSortPoint(
+                      screenPos.x,
+                      screenPos.y,
+                      1_000_000
+                    )
+                  );
+                  this.previewSprites.push(preview);
                 }
               }
             }
@@ -3053,17 +3164,14 @@ export class MainScene extends Phaser.Scene {
               }
             }
           } else {
-            // Show single tile (snow, tile, etc.)
+            // Show single tile (snow, tile, asphalt, cobblestone, etc.)
             if (!previewedTiles.has(`${tx},${ty}`)) {
               previewedTiles.add(`${tx},${ty}`);
               const screenPos = this.gridToScreen(tx, ty);
               let textureKey = "grass";
               if (cellType === TileType.Asphalt) textureKey = "asphalt";
-              else if (
-                cellType === TileType.Sidewalk ||
-                cellType === TileType.Tile
-              )
-                textureKey = "road";
+              else if (cellType === TileType.Tile) textureKey = "road";
+              else if (cellType === TileType.Cobblestone) textureKey = "cobblestone";
               else if (cellType === TileType.Snow)
                 textureKey = getSnowTextureKey(tx, ty);
               const preview = this.add.image(

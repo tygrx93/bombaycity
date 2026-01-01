@@ -103,7 +103,7 @@ export interface Car {
 }
 
 // Grid hierarchy (SC4/RCT style):
-// - LOT: 8x8 subtiles (building placement unit)
+// - LOT: 8x8 subtiles (building placement unit, road chunk unit)
 // - TILE: 2x2 subtiles (car-sized unit, 64x32 pixels)
 // - SUBTILE: 1x1 (finest unit, 32x16 pixels - characters, fine props)
 
@@ -116,6 +116,7 @@ export const TILE_WIDTH = 64;  // 2 * SUBTILE_WIDTH
 export const TILE_HEIGHT = 32; // 2 * SUBTILE_HEIGHT
 
 // Lot dimensions in subtiles (8x8 subtiles = 4x4 tiles)
+// Roads snap to lot boundaries for clean placement/deletion
 export const LOT_SIZE = 8;
 
 // Road lane size in subtiles (2x2 subtiles per lane)
@@ -124,6 +125,46 @@ export const ROAD_LANE_SIZE = 2;
 // Grid is measured in SUBTILES (finest unit)
 export const GRID_WIDTH = 192;  // 24 lots * 8 subtiles
 export const GRID_HEIGHT = 192;
+
+// ============================================
+// LOT HELPER FUNCTIONS
+// ============================================
+
+// Get the lot origin (top-left corner) for any subtile position
+export function getLotOrigin(x: number, y: number): { x: number; y: number } {
+  return {
+    x: Math.floor(x / LOT_SIZE) * LOT_SIZE,
+    y: Math.floor(y / LOT_SIZE) * LOT_SIZE,
+  };
+}
+
+// Get all subtile coordinates within a lot
+export function getLotTiles(lotOriginX: number, lotOriginY: number): Array<{ x: number; y: number }> {
+  const tiles: Array<{ x: number; y: number }> = [];
+  for (let dy = 0; dy < LOT_SIZE; dy++) {
+    for (let dx = 0; dx < LOT_SIZE; dx++) {
+      const x = lotOriginX + dx;
+      const y = lotOriginY + dy;
+      if (x >= 0 && x < GRID_WIDTH && y >= 0 && y < GRID_HEIGHT) {
+        tiles.push({ x, y });
+      }
+    }
+  }
+  return tiles;
+}
+
+// Check if a position is at a lot boundary (multiple of LOT_SIZE)
+export function isLotAligned(x: number, y: number): boolean {
+  return x % LOT_SIZE === 0 && y % LOT_SIZE === 0;
+}
+
+// Get lot index (for debugging/display)
+export function getLotIndex(x: number, y: number): { lotX: number; lotY: number } {
+  return {
+    lotX: Math.floor(x / LOT_SIZE),
+    lotY: Math.floor(y / LOT_SIZE),
+  };
+}
 
 export const CAR_SPEED = 0.05;
 

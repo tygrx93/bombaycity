@@ -180,6 +180,7 @@ export default function GameBoard() {
   const [selectedTool, setSelectedTool] = useState<ToolType>(ToolType.None);
   const [zoom, setZoom] = useState(1);
   const [debugPaths, setDebugPaths] = useState(false);
+  const [debugMode, setDebugMode] = useState(false); // Show advanced road tools
   const [showStats, setShowStats] = useState(true);
   const [isToolWindowVisible, setIsToolWindowVisible] = useState(false);
   const [buildingOrientation, setBuildingOrientation] = useState<Direction>(
@@ -323,6 +324,10 @@ export default function GameBoard() {
         if (isToolWindowVisible) {
           setIsToolWindowVisible(false);
         }
+      }
+      // Toggle debug mode with backtick key
+      if (e.key === "`") {
+        setDebugMode((prev) => !prev);
       }
     };
 
@@ -609,158 +614,84 @@ export default function GameBoard() {
               break;
             }
 
-            const originX = cell.originX;
-            const originY = cell.originY;
             const cellType = cell.type;
-
             const shouldPlaySound = cellType !== TileType.Grass;
 
-            if (originX !== undefined && originY !== undefined) {
-              // Road lane deletion (2x2) - handles both RoadLane and RoadTurn
-              // Also detects and deletes full 2-way road segments (both lanes + sidewalks)
-              const isRoadTile =
-                cellType === TileType.RoadLane || cellType === TileType.RoadTurn;
+            // Check if road infrastructure first (use getConnectedRoadTiles for all)
+            const isRoadInfra = cellType === TileType.RoadLane ||
+                               cellType === TileType.RoadTurn ||
+                               cellType === TileType.Sidewalk;
 
-              if (isRoadTile) {
-                // Helper to delete a 2x2 block
-                const delete2x2Block = (bx: number, by: number) => {
-                  for (let dy = 0; dy < ROAD_LANE_SIZE; dy++) {
-                    for (let dx = 0; dx < ROAD_LANE_SIZE; dx++) {
-                      const px = bx + dx;
-                      const py = by + dy;
-                      if (px >= 0 && px < GRID_WIDTH && py >= 0 && py < GRID_HEIGHT) {
-                        grid[py][px].type = TileType.Grass;
-                        grid[py][px].isOrigin = true;
-                        grid[py][px].originX = undefined;
-                        grid[py][px].originY = undefined;
-                        grid[py][px].laneDirection = undefined;
-                        grid[py][px].buildingId = undefined;
-                        dirtyTiles.push({ x: px, y: py });
-                      }
-                    }
+            if (isRoadInfra) {
+              // Delete road chunk - use same logic as preview
+              const tilesToDelete = phaserGameRef.current?.getConnectedRoadTiles(x, y) ?? [{ x, y }];
+
+              for (const pos of tilesToDelete) {
+                if (pos.x >= 0 && pos.x < GRID_WIDTH && pos.y >= 0 && pos.y < GRID_HEIGHT) {
+                  const c = grid[pos.y][pos.x];
+                  if (c.type !== TileType.Grass) {
+                    grid[pos.y][pos.x].type = TileType.Grass;
+                    grid[pos.y][pos.x].isOrigin = true;
+                    grid[pos.y][pos.x].originX = undefined;
+                    grid[pos.y][pos.x].originY = undefined;
+                    grid[pos.y][pos.x].laneDirection = undefined;
+                    grid[pos.y][pos.x].buildingId = undefined;
+                    dirtyTiles.push({ x: pos.x, y: pos.y });
                   }
-                };
-
-                // Check if this is part of a 2-way road by looking for parallel lane
-                const laneDir = cell.laneDirection;
-                let isTwoWayRoad = false;
-                let parallelLaneOrigin: { x: number; y: number } | null = null;
-                let sidewalk1Origin: { x: number; y: number } | null = null;
-                let sidewalk2Origin: { x: number; y: number } | null = null;
-
-                if (laneDir === Direction.Right || laneDir === Direction.Left) {
-                  // Horizontal road - check for parallel lane above or below
-                  const checkY = laneDir === Direction.Right ? originY - ROAD_LANE_SIZE : originY + ROAD_LANE_SIZE;
-                  const parallelCell = grid[checkY]?.[originX];
-                  if (parallelCell && isRoadTileType(parallelCell.type) && parallelCell.isOrigin) {
-                    const expectedDir = laneDir === Direction.Right ? Direction.Left : Direction.Right;
-                    if (parallelCell.laneDirection === expectedDir) {
-                      isTwoWayRoad = true;
-                      parallelLaneOrigin = { x: originX, y: checkY };
-                      // Sidewalks: above the top lane and below the bottom lane
-                      const topY = Math.min(originY, checkY);
-                      const bottomY = Math.max(originY, checkY) + ROAD_LANE_SIZE;
-                      sidewalk1Origin = { x: originX, y: topY - ROAD_LANE_SIZE };
-                      sidewalk2Origin = { x: originX, y: bottomY };
-                    }
-                  }
-                } else if (laneDir === Direction.Down || laneDir === Direction.Up) {
-                  // Vertical road - check for parallel lane left or right
-                  const checkX = laneDir === Direction.Down ? originX + ROAD_LANE_SIZE : originX - ROAD_LANE_SIZE;
-                  const parallelCell = grid[originY]?.[checkX];
-                  if (parallelCell && isRoadTileType(parallelCell.type) && parallelCell.isOrigin) {
-                    const expectedDir = laneDir === Direction.Down ? Direction.Up : Direction.Down;
-                    if (parallelCell.laneDirection === expectedDir) {
-                      isTwoWayRoad = true;
-                      parallelLaneOrigin = { x: checkX, y: originY };
-                      // Sidewalks: left of the left lane and right of the right lane
-                      const leftX = Math.min(originX, checkX);
-                      const rightX = Math.max(originX, checkX) + ROAD_LANE_SIZE;
-                      sidewalk1Origin = { x: leftX - ROAD_LANE_SIZE, y: originY };
-                      sidewalk2Origin = { x: rightX, y: originY };
-                    }
-                  }
-                }
-
-                // Delete the primary lane
-                delete2x2Block(originX, originY);
-
-                if (isTwoWayRoad) {
-                  // Delete parallel lane
-                  if (parallelLaneOrigin) {
-                    delete2x2Block(parallelLaneOrigin.x, parallelLaneOrigin.y);
-                  }
-                  // Delete sidewalks if they exist
-                  if (sidewalk1Origin) {
-                    const s1Cell = grid[sidewalk1Origin.y]?.[sidewalk1Origin.x];
-                    if (s1Cell?.type === TileType.Sidewalk) {
-                      delete2x2Block(sidewalk1Origin.x, sidewalk1Origin.y);
-                    }
-                  }
-                  if (sidewalk2Origin) {
-                    const s2Cell = grid[sidewalk2Origin.y]?.[sidewalk2Origin.x];
-                    if (s2Cell?.type === TileType.Sidewalk) {
-                      delete2x2Block(sidewalk2Origin.x, sidewalk2Origin.y);
-                    }
-                  }
-                }
-
-                if (shouldPlaySound) {
-                  playDestructionSound();
-                  phaserGameRef.current?.shakeScreen("x", 0.6, 150);
-                }
-              } else {
-                const cellBuildingId = cell.buildingId;
-                let sizeW = 1;
-                let sizeH = 1;
-
-                if (cellType === TileType.Building && cellBuildingId) {
-                  const building = getBuilding(cellBuildingId);
-                  if (building) {
-                    // Get footprint based on stored orientation
-                    const footprint = getBuildingFootprint(
-                      building,
-                      cell.buildingOrientation
-                    );
-                    sizeW = footprint.width;
-                    sizeH = footprint.height;
-                  }
-                }
-
-                for (let dy = 0; dy < sizeH; dy++) {
-                  for (let dx = 0; dx < sizeW; dx++) {
-                    const px = originX + dx;
-                    const py = originY + dy;
-                    if (px < GRID_WIDTH && py < GRID_HEIGHT) {
-                      grid[py][px].type = TileType.Grass;
-                      grid[py][px].buildingId = undefined;
-                      grid[py][px].isOrigin = true;
-                      grid[py][px].originX = undefined;
-                      grid[py][px].originY = undefined;
-                      // Clear prop slot and prop layer fields
-                      grid[py][px].allowsProp = undefined;
-                      grid[py][px].propId = undefined;
-                      grid[py][px].propOriginX = undefined;
-                      grid[py][px].propOriginY = undefined;
-                      grid[py][px].propOrientation = undefined;
-                      dirtyTiles.push({ x: px, y: py });
-                    }
-                  }
-                }
-
-                if (shouldPlaySound) {
-                  playDestructionSound();
-                  // Horizontal shake on deletion
-                  phaserGameRef.current?.shakeScreen("x", 0.6, 150);
                 }
               }
+
+              if (shouldPlaySound) {
+                playDestructionSound();
+                phaserGameRef.current?.shakeScreen("x", 0.6, 150);
+              }
+            } else if (cellType === TileType.Building && cell.buildingId) {
+              // Building deletion
+              const originX = cell.originX ?? x;
+              const originY = cell.originY ?? y;
+              const building = getBuilding(cell.buildingId);
+              let sizeW = 1;
+              let sizeH = 1;
+
+              if (building) {
+                const footprint = getBuildingFootprint(building, cell.buildingOrientation);
+                sizeW = footprint.width;
+                sizeH = footprint.height;
+              }
+
+              for (let dy = 0; dy < sizeH; dy++) {
+                for (let dx = 0; dx < sizeW; dx++) {
+                  const px = originX + dx;
+                  const py = originY + dy;
+                  if (px < GRID_WIDTH && py < GRID_HEIGHT) {
+                    grid[py][px].type = TileType.Grass;
+                    grid[py][px].buildingId = undefined;
+                    grid[py][px].isOrigin = true;
+                    grid[py][px].originX = undefined;
+                    grid[py][px].originY = undefined;
+                    grid[py][px].allowsProp = undefined;
+                    grid[py][px].propId = undefined;
+                    grid[py][px].propOriginX = undefined;
+                    grid[py][px].propOriginY = undefined;
+                    grid[py][px].propOrientation = undefined;
+                    dirtyTiles.push({ x: px, y: py });
+                  }
+                }
+              }
+
+              if (shouldPlaySound) {
+                playDestructionSound();
+                phaserGameRef.current?.shakeScreen("x", 0.6, 150);
+              }
             } else if (cellType !== TileType.Grass) {
+              // Other tile types - single tile delete
               grid[y][x].type = TileType.Grass;
               grid[y][x].isOrigin = true;
               dirtyTiles.push({ x, y });
-              playDestructionSound();
-              // Horizontal shake on deletion
-              phaserGameRef.current?.shakeScreen("x", 0.6, 150);
+              if (shouldPlaySound) {
+                playDestructionSound();
+                phaserGameRef.current?.shakeScreen("x", 0.6, 150);
+              }
             }
             break;
           }
@@ -1120,142 +1051,63 @@ export default function GameBoard() {
     []
   );
 
-  // Perform the actual deletion of tiles
+  // Perform the actual deletion of tiles - uses getConnectedRoadTiles for road infrastructure
   const performDeletion = useCallback(
     (tiles: Array<{ x: number; y: number }>) => {
       const grid = gridRef.current;
       const dirtyTiles: Array<{ x: number; y: number }> = [];
-      const deletedOrigins = new Set<string>();
+      const deletedTiles = new Set<string>();
 
       for (const { x, y } of tiles) {
         if (x < 0 || x >= GRID_WIDTH || y < 0 || y >= GRID_HEIGHT) continue;
+        if (deletedTiles.has(`${x},${y}`)) continue;
 
         const cell = grid[y][x];
         if (cell.type === TileType.Grass) continue;
 
-        const originX = cell.originX ?? x;
-        const originY = cell.originY ?? y;
-        const originKey = `${originX},${originY}`;
-
-        if (deletedOrigins.has(originKey)) continue;
-        deletedOrigins.add(originKey);
-
         const cellType = cell.type;
+        const isRoadInfra = cellType === TileType.RoadLane ||
+                           cellType === TileType.RoadTurn ||
+                           cellType === TileType.Sidewalk;
 
-        if (cellType === TileType.RoadLane || cellType === TileType.RoadTurn) {
-          // Check if this is part of a 2-way road by looking for parallel lane
-          const laneDir = cell.laneDirection;
-          let isTwoWayRoad = false;
-          let parallelLaneOrigin: { x: number; y: number } | null = null;
-          let sidewalk1Origin: { x: number; y: number } | null = null;
-          let sidewalk2Origin: { x: number; y: number } | null = null;
+        if (isRoadInfra) {
+          // Use getConnectedRoadTiles for consistent road chunk deletion
+          const chunkTiles = phaserGameRef.current?.getConnectedRoadTiles(x, y) ?? [{ x, y }];
+          for (const pos of chunkTiles) {
+            const key = `${pos.x},${pos.y}`;
+            if (deletedTiles.has(key)) continue;
+            deletedTiles.add(key);
 
-          if (laneDir === Direction.Right || laneDir === Direction.Left) {
-            // Horizontal road - check for parallel lane above or below
-            const checkY = laneDir === Direction.Right ? originY + ROAD_LANE_SIZE : originY - ROAD_LANE_SIZE;
-            const parallelCell = grid[checkY]?.[originX];
-            if (parallelCell && isRoadTileType(parallelCell.type) && parallelCell.isOrigin) {
-              const expectedDir = laneDir === Direction.Right ? Direction.Left : Direction.Right;
-              if (parallelCell.laneDirection === expectedDir) {
-                isTwoWayRoad = true;
-                parallelLaneOrigin = { x: originX, y: checkY };
-                // Sidewalks: above the top lane and below the bottom lane
-                const topY = Math.min(originY, checkY);
-                const bottomY = Math.max(originY, checkY) + ROAD_LANE_SIZE;
-                sidewalk1Origin = { x: originX, y: topY - ROAD_LANE_SIZE };
-                sidewalk2Origin = { x: originX, y: bottomY };
-              }
-            }
-          } else if (laneDir === Direction.Down || laneDir === Direction.Up) {
-            // Vertical road - check for parallel lane left or right
-            const checkX = laneDir === Direction.Down ? originX + ROAD_LANE_SIZE : originX - ROAD_LANE_SIZE;
-            const parallelCell = grid[originY]?.[checkX];
-            if (parallelCell && isRoadTileType(parallelCell.type) && parallelCell.isOrigin) {
-              const expectedDir = laneDir === Direction.Down ? Direction.Up : Direction.Down;
-              if (parallelCell.laneDirection === expectedDir) {
-                isTwoWayRoad = true;
-                parallelLaneOrigin = { x: checkX, y: originY };
-                // Sidewalks: left of the left lane and right of the right lane
-                const leftX = Math.min(originX, checkX);
-                const rightX = Math.max(originX, checkX) + ROAD_LANE_SIZE;
-                sidewalk1Origin = { x: leftX - ROAD_LANE_SIZE, y: originY };
-                sidewalk2Origin = { x: rightX, y: originY };
-              }
-            }
-          }
-
-          // Helper to delete a 2x2 block
-          const delete2x2Block = (bx: number, by: number) => {
-            for (let dy = 0; dy < ROAD_LANE_SIZE; dy++) {
-              for (let dx = 0; dx < ROAD_LANE_SIZE; dx++) {
-                const px = bx + dx;
-                const py = by + dy;
-                if (px >= 0 && px < GRID_WIDTH && py >= 0 && py < GRID_HEIGHT) {
-                  grid[py][px].type = TileType.Grass;
-                  grid[py][px].isOrigin = true;
-                  grid[py][px].originX = undefined;
-                  grid[py][px].originY = undefined;
-                  grid[py][px].laneDirection = undefined;
-                  grid[py][px].buildingId = undefined;
-                  dirtyTiles.push({ x: px, y: py });
-                }
-              }
-            }
-          };
-
-          // Delete the primary lane
-          delete2x2Block(originX, originY);
-
-          if (isTwoWayRoad) {
-            // Delete parallel lane
-            if (parallelLaneOrigin) {
-              const pKey = `${parallelLaneOrigin.x},${parallelLaneOrigin.y}`;
-              if (!deletedOrigins.has(pKey)) {
-                deletedOrigins.add(pKey);
-                delete2x2Block(parallelLaneOrigin.x, parallelLaneOrigin.y);
-              }
-            }
-            // Delete sidewalks if they exist
-            if (sidewalk1Origin) {
-              const s1Cell = grid[sidewalk1Origin.y]?.[sidewalk1Origin.x];
-              if (s1Cell?.type === TileType.Sidewalk) {
-                const s1Key = `${sidewalk1Origin.x},${sidewalk1Origin.y}`;
-                if (!deletedOrigins.has(s1Key)) {
-                  deletedOrigins.add(s1Key);
-                  delete2x2Block(sidewalk1Origin.x, sidewalk1Origin.y);
-                }
-              }
-            }
-            if (sidewalk2Origin) {
-              const s2Cell = grid[sidewalk2Origin.y]?.[sidewalk2Origin.x];
-              if (s2Cell?.type === TileType.Sidewalk) {
-                const s2Key = `${sidewalk2Origin.x},${sidewalk2Origin.y}`;
-                if (!deletedOrigins.has(s2Key)) {
-                  deletedOrigins.add(s2Key);
-                  delete2x2Block(sidewalk2Origin.x, sidewalk2Origin.y);
-                }
+            if (pos.x >= 0 && pos.x < GRID_WIDTH && pos.y >= 0 && pos.y < GRID_HEIGHT) {
+              const c = grid[pos.y][pos.x];
+              if (c.type !== TileType.Grass) {
+                grid[pos.y][pos.x].type = TileType.Grass;
+                grid[pos.y][pos.x].isOrigin = true;
+                grid[pos.y][pos.x].originX = undefined;
+                grid[pos.y][pos.x].originY = undefined;
+                grid[pos.y][pos.x].laneDirection = undefined;
+                grid[pos.y][pos.x].buildingId = undefined;
+                dirtyTiles.push({ x: pos.x, y: pos.y });
               }
             }
           }
         } else if (cellType === TileType.Building && cell.buildingId) {
           // Delete building
+          const originX = cell.originX ?? x;
+          const originY = cell.originY ?? y;
           const building = getBuilding(cell.buildingId);
-          let sizeW = 1;
-          let sizeH = 1;
+          const footprint = building
+            ? getBuildingFootprint(building, cell.buildingOrientation)
+            : { width: 1, height: 1 };
 
-          if (building) {
-            const footprint = getBuildingFootprint(
-              building,
-              cell.buildingOrientation
-            );
-            sizeW = footprint.width;
-            sizeH = footprint.height;
-          }
-
-          for (let dy = 0; dy < sizeH; dy++) {
-            for (let dx = 0; dx < sizeW; dx++) {
+          for (let dy = 0; dy < footprint.height; dy++) {
+            for (let dx = 0; dx < footprint.width; dx++) {
               const px = originX + dx;
               const py = originY + dy;
+              const key = `${px},${py}`;
+              if (deletedTiles.has(key)) continue;
+              deletedTiles.add(key);
+
               if (px < GRID_WIDTH && py < GRID_HEIGHT) {
                 grid[py][px].type = TileType.Grass;
                 grid[py][px].buildingId = undefined;
@@ -1268,6 +1120,7 @@ export default function GameBoard() {
           }
         } else {
           // Snow, Tile, or other single tiles
+          deletedTiles.add(`${x},${y}`);
           grid[y][x].type = TileType.Grass;
           grid[y][x].isOrigin = true;
           grid[y][x].originX = undefined;
@@ -1278,10 +1131,9 @@ export default function GameBoard() {
 
       if (dirtyTiles.length > 0) {
         phaserGameRef.current?.markTilesDirty(dirtyTiles);
+        playDestructionSound();
+        phaserGameRef.current?.shakeScreen("x", 0.6, 150);
       }
-      playDestructionSound();
-      // Horizontal shake on deletion (eraser drag / bulk delete path)
-      phaserGameRef.current?.shakeScreen("x", 0.6, 150);
       forceGridUpdate();
     },
     []
@@ -2139,6 +1991,7 @@ export default function GameBoard() {
               setSelectedBuildingId(null);
             }
           }}
+          debugMode={debugMode}
         />
 
         {/* Floating debug window - HIDDEN FOR NOW */}

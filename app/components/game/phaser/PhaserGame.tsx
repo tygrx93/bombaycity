@@ -31,6 +31,7 @@ export interface PhaserGameHandle {
   zoomAtPoint: (zoom: number, screenX: number, screenY: number) => void;
   markTilesDirty: (tiles: Array<{ x: number; y: number }>) => void;
   centerCameraOnMap: () => void;
+  getConnectedRoadTiles: (x: number, y: number) => Array<{ x: number; y: number }>;
 }
 
 interface PhaserGameProps {
@@ -157,6 +158,12 @@ const PhaserGame = forwardRef<PhaserGameHandle, PhaserGameProps>(
           if (sceneRef.current) {
             sceneRef.current.centerCameraOnMap();
           }
+        },
+        getConnectedRoadTiles: (x: number, y: number) => {
+          if (sceneRef.current) {
+            return sceneRef.current.getConnectedRoadTiles(x, y);
+          }
+          return [{ x, y }];
         },
       }),
       []

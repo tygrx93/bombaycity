@@ -22,6 +22,7 @@ interface ToolWindowProps {
   onRotate?: () => void;
   isVisible: boolean;
   onClose: () => void;
+  debugMode?: boolean;
 }
 
 // Get the preview sprite for a building (prefer south, fall back to first available)
@@ -63,6 +64,7 @@ export default function ToolWindow({
   onRotate,
   isVisible,
   onClose,
+  debugMode = false,
 }: ToolWindowProps) {
   // Calculate initial position (lazy to avoid SSR issues)
   const [position, setPosition] = useState(() => {
@@ -305,15 +307,81 @@ export default function ToolWindow({
                 marginBottom: 12,
               }}
             >
+              {/* Debug-only: 1-Way Lane */}
+              {debugMode && (
+                <button
+                  onClick={() => {
+                    onToolSelect(ToolType.RoadLane);
+                    playClickSound();
+                  }}
+                  className={`rct-button ${
+                    selectedTool === ToolType.RoadLane ? "active" : ""
+                  }`}
+                  title="Road Lane (R to rotate direction)"
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: 8,
+                    minHeight: 60,
+                  }}
+                >
+                  <img
+                    src="/Tiles/1x1asphalt.png"
+                    alt="Road"
+                    style={{
+                      width: 40,
+                      height: 40,
+                      objectFit: "contain",
+                      imageRendering: "pixelated",
+                    }}
+                  />
+                  <span style={{ fontSize: 13, marginTop: 4 }}>1-Way</span>
+                </button>
+              )}
+              {/* Debug-only: Turn Tile */}
+              {debugMode && (
+                <button
+                  onClick={() => {
+                    onToolSelect(ToolType.RoadTurn);
+                    playClickSound();
+                  }}
+                  className={`rct-button ${
+                    selectedTool === ToolType.RoadTurn ? "active" : ""
+                  }`}
+                  title="Turn Tile: Straight or Right Turn (R to rotate)"
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: 8,
+                    minHeight: 60,
+                  }}
+                >
+                  <img
+                    src="/Tiles/1x1asphalt.png"
+                    alt="Turn"
+                    style={{
+                      width: 40,
+                      height: 40,
+                      objectFit: "contain",
+                      imageRendering: "pixelated",
+                    }}
+                  />
+                  <span style={{ fontSize: 11, marginTop: 4 }}>↱ Turn</span>
+                </button>
+              )}
               <button
                 onClick={() => {
-                  onToolSelect(ToolType.RoadLane);
+                  onToolSelect(ToolType.TwoWayRoad);
                   playClickSound();
                 }}
                 className={`rct-button ${
-                  selectedTool === ToolType.RoadLane ? "active" : ""
+                  selectedTool === ToolType.TwoWayRoad ? "active" : ""
                 }`}
-                title="Road Lane (R to rotate direction)"
+                title="Road with Sidewalks"
                 style={{
                   display: "flex",
                   flexDirection: "column",
@@ -333,67 +401,7 @@ export default function ToolWindow({
                     imageRendering: "pixelated",
                   }}
                 />
-                <span style={{ fontSize: 13, marginTop: 4 }}>1-Way</span>
-              </button>
-              <button
-                onClick={() => {
-                  onToolSelect(ToolType.RoadTurn);
-                  playClickSound();
-                }}
-                className={`rct-button ${
-                  selectedTool === ToolType.RoadTurn ? "active" : ""
-                }`}
-                title="Turn Tile: Straight or Right Turn (R to rotate)"
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  padding: 8,
-                  minHeight: 60,
-                }}
-              >
-                <img
-                  src="/Tiles/1x1asphalt.png"
-                  alt="Turn"
-                  style={{
-                    width: 40,
-                    height: 40,
-                    objectFit: "contain",
-                    imageRendering: "pixelated",
-                  }}
-                />
-                <span style={{ fontSize: 11, marginTop: 4 }}>↱ Turn</span>
-              </button>
-              <button
-                onClick={() => {
-                  onToolSelect(ToolType.TwoWayRoad);
-                  playClickSound();
-                }}
-                className={`rct-button ${
-                  selectedTool === ToolType.TwoWayRoad ? "active" : ""
-                }`}
-                title="2-Way Road: Parallel lanes with opposite directions"
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  padding: 8,
-                  minHeight: 60,
-                }}
-              >
-                <img
-                  src="/Tiles/1x1asphalt.png"
-                  alt="2-Way"
-                  style={{
-                    width: 40,
-                    height: 40,
-                    objectFit: "contain",
-                    imageRendering: "pixelated",
-                  }}
-                />
-                <span style={{ fontSize: 11, marginTop: 4 }}>↔ 2-Way</span>
+                <span style={{ fontSize: 13, marginTop: 4 }}>Road</span>
               </button>
               <button
                 onClick={() => {
@@ -403,7 +411,7 @@ export default function ToolWindow({
                 className={`rct-button ${
                   selectedTool === ToolType.SidewalklessRoad ? "active" : ""
                 }`}
-                title="2-Way Road without Sidewalks"
+                title="Road without Sidewalks"
                 style={{
                   display: "flex",
                   flexDirection: "column",
@@ -423,7 +431,7 @@ export default function ToolWindow({
                     imageRendering: "pixelated",
                   }}
                 />
-                <span style={{ fontSize: 11, marginTop: 4 }}>↔ NoWalk</span>
+                <span style={{ fontSize: 10, marginTop: 4 }}>No Walk</span>
               </button>
               <button
                 onClick={() => {
