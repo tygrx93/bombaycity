@@ -6,6 +6,7 @@ export enum TileType {
   RoadTurn = "roadTurn", // 2x2 lane: can go straight OR turn right (rotate for other directions)
   Tile = "tile",
   Snow = "snow",
+  Cobblestone = "cobblestone", // Cobblestone/brick paving
   Building = "building",
 }
 
@@ -14,10 +15,12 @@ export enum ToolType {
   None = "none",
   RoadLane = "roadLane", // 2x2 lane placement with direction (1-way)
   RoadTurn = "roadTurn", // 2x2 lane: straight or right turn (rotate for all directions)
-  TwoWayRoad = "twoWayRoad", // Two parallel lanes with opposite directions
+  TwoWayRoad = "twoWayRoad", // Two parallel lanes with opposite directions + sidewalks
+  SidewalklessRoad = "sidewalklessRoad", // Two parallel lanes without sidewalks
   Asphalt = "asphalt", // Plain asphalt (decorative)
   Sidewalk = "sidewalk", // Pedestrian walkway
   Tile = "tile",
+  Cobblestone = "cobblestone", // Cobblestone/brick paving
   Snow = "snow",
   Building = "building", // Generic - actual building ID stored separately
   Eraser = "eraser",
@@ -130,6 +133,7 @@ export const TILE_SIZES: Record<TileType, { w: number; h: number }> = {
   [TileType.RoadTurn]: { w: 2, h: 2 }, // 2x2 turn tile (straight or right turn)
   [TileType.Tile]: { w: 1, h: 1 },
   [TileType.Snow]: { w: 1, h: 1 },
+  [TileType.Cobblestone]: { w: 1, h: 1 },
   [TileType.Building]: { w: 4, h: 4 }, // Default, actual size from building registry
 };
 
@@ -161,51 +165,21 @@ export function isoToGrid(
 }
 
 // Tile indices for tilemap (must match tileset order)
-// Non-quadrant tiles: single index
-// Quadrant tiles: 4 consecutive indices (TL, TR, BL, BR)
+// All tiles are now native 32x16 resolution
 export enum TileIndex {
-  // Non-quadrant tiles (scaled, single tile)
+  // Base tiles
   Grass = 0,
   Snow1 = 1,
   Snow2 = 2,
   Snow3 = 3,
+  Sidewalk = 4,      // Pedestrian sidewalk
+  Road = 5,          // Plain road (center, no sidewalk edge)
+  Asphalt = 6,       // Generic asphalt
+  Cobblestone = 7,   // Cobblestone/brick
 
-  // Quadrant tiles (native res, 4 tiles each) - ready for future assets
-  // Road: indices 4-7 (TL, TR, BL, BR)
-  RoadTL = 4,
-  RoadTR = 5,
-  RoadBL = 6,
-  RoadBR = 7,
-
-  // Asphalt: indices 8-11
-  AsphaltTL = 8,
-  AsphaltTR = 9,
-  AsphaltBL = 10,
-  AsphaltBR = 11,
-}
-
-// Which tile types use quadrant system (native res, position-based selection)
-export const QUADRANT_TILES: Record<string, boolean> = {
-  grass: false,    // Scaled for now
-  sidewalk: true,  // Quadrant-based (was "road")
-  asphalt: true,   // Quadrant-based
-  roadLane: true,  // Quadrant-based (2x2 lanes)
-  roadTurn: true,  // Same as roadLane (straight or right turn)
-  snow: false,     // Scaled for now
-};
-
-// Get tile index, handling quadrant tiles based on position
-export function getTileIndexForType(
-  tileType: string,
-  baseIndex: TileIndex,
-  x: number,
-  y: number
-): number {
-  if (QUADRANT_TILES[tileType]) {
-    // Quadrant tile: pick TL/TR/BL/BR based on position
-    const quadrant = (y % 2) * 2 + (x % 2); // 0=TL, 1=TR, 2=BL, 3=BR
-    return baseIndex + quadrant;
-  }
-  // Non-quadrant: just return the base index
-  return baseIndex;
+  // Road tiles with sidewalk edges (for road-sidewalk borders)
+  RoadEdgeNorth = 8,  // Road with sidewalk curb on north edge
+  RoadEdgeSouth = 9,  // Road with sidewalk curb on south edge
+  RoadEdgeEast = 10,  // Road with sidewalk curb on east edge
+  RoadEdgeWest = 11,  // Road with sidewalk curb on west edge
 }

@@ -488,11 +488,12 @@ export default function GameBoard() {
                   const cell = grid[py][px];
                   const cellType = cell.type;
                   if (isDecoration) {
-                    // Decorations can be placed on grass, tile, snow, OR building prop slots
+                    // Decorations can be placed on grass, tile, snow, sidewalk, OR building prop slots
                     if (
                       cellType !== TileType.Grass &&
                       cellType !== TileType.Tile &&
-                      cellType !== TileType.Snow
+                      cellType !== TileType.Snow &&
+                      cellType !== TileType.Sidewalk
                     ) {
                       // Check if it's a building tile that allows props
                       if (cellType === TileType.Building && cell.allowsProp && !cell.propId) {
@@ -502,7 +503,8 @@ export default function GameBoard() {
                       }
                     }
                   } else {
-                    if (cellType !== TileType.Grass) {
+                    // Buildings can be placed on any ground tile, but not on other buildings or roads
+                    if (cellType === TileType.Building || cellType === TileType.RoadLane || cellType === TileType.RoadTurn) {
                       buildingHasCollision = true;
                     }
                   }
@@ -834,6 +836,28 @@ export default function GameBoard() {
             grid[y][x].originY = y;
             dirtyTiles.push({ x, y });
           }
+        } else if (selectedTool === ToolType.Cobblestone) {
+          if (cell.type === TileType.Building && cell.buildingId) {
+            const building = getBuilding(cell.buildingId);
+            if (
+              building &&
+              (building.category === "props" || building.isDecoration)
+            ) {
+              grid[y][x].underlyingTileType = TileType.Cobblestone;
+              dirtyTiles.push({ x, y });
+            }
+          } else if (
+            cell.type === TileType.Grass ||
+            cell.type === TileType.Snow ||
+            cell.type === TileType.Tile ||
+            cell.type === TileType.Asphalt
+          ) {
+            grid[y][x].type = TileType.Cobblestone;
+            grid[y][x].isOrigin = true;
+            grid[y][x].originX = x;
+            grid[y][x].originY = y;
+            dirtyTiles.push({ x, y });
+          }
         }
       }
 
@@ -892,7 +916,7 @@ export default function GameBoard() {
   //   Horizontal: sidewalk row, lane (right), lane (left), sidewalk row
   //   Vertical: sidewalk col, lane (down), lane (up), sidewalk col
   const handleTwoWayRoadDrag = useCallback(
-    (lanes: Array<{ x: number; y: number }>, orientation: "horizontal" | "vertical") => {
+    (lanes: Array<{ x: number; y: number }>, orientation: "horizontal" | "vertical", includeSidewalks: boolean = true) => {
       if (lanes.length === 0) return;
 
       const grid = gridRef.current;
@@ -1004,7 +1028,8 @@ export default function GameBoard() {
       }
 
       // Second pass: place 2x2 sidewalk blocks on outer edges (matching lane size)
-      if (orientation === "horizontal") {
+      // Only if includeSidewalks is true (TwoWayRoad has them, SidewalklessRoad doesn't)
+      if (includeSidewalks && orientation === "horizontal") {
         // Group lanes by x position to find road segments
         const lanesByX = new Map<number, number[]>();
         for (const { x: laneX, y: laneY } of lanes) {
@@ -1041,7 +1066,7 @@ export default function GameBoard() {
             }
           }
         }
-      } else {
+      } else if (includeSidewalks && orientation === "vertical") {
         // Vertical road - group lanes by y position
         const lanesByY = new Map<number, number[]>();
         for (const { x: laneX, y: laneY } of lanes) {

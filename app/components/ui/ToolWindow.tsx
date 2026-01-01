@@ -397,6 +397,36 @@ export default function ToolWindow({
               </button>
               <button
                 onClick={() => {
+                  onToolSelect(ToolType.SidewalklessRoad);
+                  playClickSound();
+                }}
+                className={`rct-button ${
+                  selectedTool === ToolType.SidewalklessRoad ? "active" : ""
+                }`}
+                title="2-Way Road without Sidewalks"
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: 8,
+                  minHeight: 60,
+                }}
+              >
+                <img
+                  src="/Tiles/1x1asphalt.png"
+                  alt="No Sidewalk"
+                  style={{
+                    width: 40,
+                    height: 40,
+                    objectFit: "contain",
+                    imageRendering: "pixelated",
+                  }}
+                />
+                <span style={{ fontSize: 11, marginTop: 4 }}>↔ NoWalk</span>
+              </button>
+              <button
+                onClick={() => {
                   onToolSelect(ToolType.Asphalt);
                   playClickSound();
                 }}
@@ -414,7 +444,7 @@ export default function ToolWindow({
                 }}
               >
                 <img
-                  src="/Tiles/1x1asphalt_tile.png"
+                  src="/newtiles/1x1_generic_asphalt.png"
                   alt="Asphalt"
                   style={{
                     width: 40,
@@ -424,6 +454,36 @@ export default function ToolWindow({
                   }}
                 />
                 <span style={{ fontSize: 13, marginTop: 4 }}>Asphalt</span>
+              </button>
+              <button
+                onClick={() => {
+                  onToolSelect(ToolType.Cobblestone);
+                  playClickSound();
+                }}
+                className={`rct-button ${
+                  selectedTool === ToolType.Cobblestone ? "active" : ""
+                }`}
+                title="Cobblestone"
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: 8,
+                  minHeight: 60,
+                }}
+              >
+                <img
+                  src="/newtiles/1x1cobblestone.png"
+                  alt="Cobblestone"
+                  style={{
+                    width: 40,
+                    height: 40,
+                    objectFit: "contain",
+                    imageRendering: "pixelated",
+                  }}
+                />
+                <span style={{ fontSize: 13, marginTop: 4 }}>Cobble</span>
               </button>
               <button
                 onClick={() => {

@@ -14,7 +14,6 @@ import {
   TILE_WIDTH,
   TILE_HEIGHT,
   TileIndex,
-  QUADRANT_TILES,
   ToolType,
   CHARACTER_SPEED,
   ROAD_LANE_SIZE,
@@ -58,7 +57,8 @@ export interface SceneEvents {
   ) => void;
   onTwoWayRoadDrag?: (
     lanes: Array<{ x: number; y: number }>,
-    orientation: "horizontal" | "vertical"
+    orientation: "horizontal" | "vertical",
+    includeSidewalks: boolean
   ) => void;
 }
 
@@ -209,9 +209,18 @@ export class MainScene extends Phaser.Scene {
   preload(): void {
     // Load tile textures (will be combined into tileset in create())
     // These are 64x32, we'll scale to 32x16 for the tilemap
-    this.load.image("grass", "/Tiles/1x1grass.png");
-    this.load.image("road", "/Tiles/1x1square_tile.png");
-    this.load.image("asphalt", "/Tiles/1x1asphalt_tile.png");
+    // Ground tiles (new tiles at native 32x16 resolution)
+    this.load.image("grass", "/newtiles/1x1grass.png");
+    this.load.image("sidewalk", "/newtiles/1sidewalk_tile.png");
+    this.load.image("road", "/newtiles/1x1_road.png");
+    this.load.image("asphalt", "/newtiles/1x1_generic_asphalt.png");
+    this.load.image("cobblestone", "/newtiles/1x1cobblestone.png");
+    // Road edge tiles (road with sidewalk curb on each edge)
+    this.load.image("road_edge_north", "/newtiles/1x1road_sidewalk_north.png");
+    this.load.image("road_edge_south", "/newtiles/1x1road_sidewalk_south.png");
+    this.load.image("road_edge_east", "/newtiles/1x1road_sidewalk_east.png");
+    this.load.image("road_edge_west", "/newtiles/1x1road_sidwalk_west.png"); // Note: typo in filename
+    // Snow tiles (keeping old for now until we get new ones)
     this.load.image("snow_1", "/Tiles/1x1snow_tile_1.png");
     this.load.image("snow_2", "/Tiles/1x1snow_tile_2.png");
     this.load.image("snow_3", "/Tiles/1x1snow_tile_3.png");
@@ -354,21 +363,24 @@ export class MainScene extends Phaser.Scene {
   // Generate tileset texture and create isometric tilemap
   private setupTilemap(): void {
     // Tileset layout (must match TileIndex enum):
-    // 0: Grass (scaled)
-    // 1-3: Snow1, Snow2, Snow3 (scaled)
-    // 4-7: Road quadrants (TL, TR, BL, BR) - scaled for now, ready for native assets
-    // 8-11: Asphalt quadrants (TL, TR, BL, BR) - scaled for now
+    // 0: Grass
+    // 1-3: Snow variants
+    // 4: Sidewalk
+    // 5: Road (plain center)
+    // 6: Asphalt
+    // 7: Cobblestone
+    // 8-11: Road with sidewalk edges (north, south, east, west)
 
     const tilesetWidth = SUBTILE_WIDTH;
-    const tilesetHeight = SUBTILE_HEIGHT * 12; // 4 non-quadrant + 8 quadrant slots
+    const tilesetHeight = SUBTILE_HEIGHT * 12; // 12 tile slots
 
     const canvas = document.createElement("canvas");
     canvas.width = tilesetWidth;
     canvas.height = tilesetHeight;
     const ctx = canvas.getContext("2d")!;
 
-    // Helper to draw a scaled tile at an index
-    const drawScaledTile = (textureKey: string, index: number) => {
+    // Helper to draw a tile at an index (all tiles are now native 32x16)
+    const drawTile = (textureKey: string, index: number) => {
       const texture = this.textures.get(textureKey);
       const source = texture.getSourceImage() as HTMLImageElement;
       ctx.drawImage(
@@ -384,18 +396,21 @@ export class MainScene extends Phaser.Scene {
       );
     };
 
-    // Non-quadrant tiles (scaled)
-    drawScaledTile("grass", TileIndex.Grass);
-    drawScaledTile("snow_1", TileIndex.Snow1);
-    drawScaledTile("snow_2", TileIndex.Snow2);
-    drawScaledTile("snow_3", TileIndex.Snow3);
+    // Base tiles
+    drawTile("grass", TileIndex.Grass);
+    drawTile("snow_1", TileIndex.Snow1);
+    drawTile("snow_2", TileIndex.Snow2);
+    drawTile("snow_3", TileIndex.Snow3);
+    drawTile("sidewalk", TileIndex.Sidewalk);
+    drawTile("road", TileIndex.Road);
+    drawTile("asphalt", TileIndex.Asphalt);
+    drawTile("cobblestone", TileIndex.Cobblestone);
 
-    // Quadrant tiles - for now just scale the same image 4 times
-    // Later: load actual quadrant assets (road_tl.png, road_tr.png, etc.)
-    for (let q = 0; q < 4; q++) {
-      drawScaledTile("road", TileIndex.RoadTL + q);
-      drawScaledTile("asphalt", TileIndex.AsphaltTL + q);
-    }
+    // Road edge tiles (road with sidewalk curb)
+    drawTile("road_edge_north", TileIndex.RoadEdgeNorth);
+    drawTile("road_edge_south", TileIndex.RoadEdgeSouth);
+    drawTile("road_edge_east", TileIndex.RoadEdgeEast);
+    drawTile("road_edge_west", TileIndex.RoadEdgeWest);
 
     // Add tileset texture to Phaser
     this.textures.addCanvas("ground_tileset", canvas);
@@ -640,7 +655,7 @@ export class MainScene extends Phaser.Scene {
     const gy = Math.floor(y);
     if (gx < 0 || gx >= GRID_WIDTH || gy < 0 || gy >= GRID_HEIGHT) return false;
     const tileType = this.grid[gy][gx].type;
-    return tileType === TileType.Sidewalk || tileType === TileType.Tile;
+    return tileType === TileType.Sidewalk || tileType === TileType.Tile || tileType === TileType.Cobblestone;
   }
 
   private getValidDirections(tileX: number, tileY: number): Direction[] {
@@ -686,7 +701,7 @@ export class MainScene extends Phaser.Scene {
       for (let gy = 0; gy < GRID_HEIGHT; gy++) {
         for (let gx = 0; gx < GRID_WIDTH; gx++) {
           const tileType = this.grid[gy][gx].type;
-          if (tileType === TileType.Sidewalk || tileType === TileType.Tile) {
+          if (tileType === TileType.Sidewalk || tileType === TileType.Tile || tileType === TileType.Cobblestone) {
             walkableTiles.push({ x: gx, y: gy });
           }
         }
@@ -859,12 +874,13 @@ export class MainScene extends Phaser.Scene {
         this.hoverTile = { x: tileX, y: tileY };
         this.events_.onTileHover(tileX, tileY);
 
-        // If dragging with snow/tile/asphalt/eraser tool, add tile to drag set
+        // If dragging with snow/tile/asphalt/cobblestone/eraser tool, add tile to drag set
         if (
           this.isDragging &&
           (this.selectedTool === ToolType.Snow ||
             this.selectedTool === ToolType.Tile ||
             this.selectedTool === ToolType.Asphalt ||
+            this.selectedTool === ToolType.Cobblestone ||
             this.selectedTool === ToolType.Eraser)
         ) {
           this.dragTiles.add(`${tileX},${tileY}`);
@@ -875,7 +891,8 @@ export class MainScene extends Phaser.Scene {
           this.isDragging &&
           (this.selectedTool === ToolType.RoadLane ||
             this.selectedTool === ToolType.RoadTurn ||
-            this.selectedTool === ToolType.TwoWayRoad) &&
+            this.selectedTool === ToolType.TwoWayRoad ||
+            this.selectedTool === ToolType.SidewalklessRoad) &&
           this.dragStartTile
         ) {
           // Determine direction on first movement
@@ -896,7 +913,7 @@ export class MainScene extends Phaser.Scene {
           this.dragTiles.clear();
 
           // Constrain to the determined direction
-          const isTwoWay = this.selectedTool === ToolType.TwoWayRoad;
+          const isTwoWay = this.selectedTool === ToolType.TwoWayRoad || this.selectedTool === ToolType.SidewalklessRoad;
 
           if (this.dragDirection === "horizontal") {
             // Only add lanes along horizontal line
@@ -978,16 +995,18 @@ export class MainScene extends Phaser.Scene {
       }
 
       if (this.hoverTile) {
-        // Start drag for snow/tile/asphalt/eraser/road tools
+        // Start drag for snow/tile/asphalt/cobblestone/eraser/road tools
         if (
           this.selectedTool === ToolType.Snow ||
           this.selectedTool === ToolType.Tile ||
           this.selectedTool === ToolType.Asphalt ||
+          this.selectedTool === ToolType.Cobblestone ||
           this.selectedTool === ToolType.Eraser ||
           this.selectedTool === ToolType.Sidewalk ||
           this.selectedTool === ToolType.RoadLane ||
           this.selectedTool === ToolType.RoadTurn ||
-          this.selectedTool === ToolType.TwoWayRoad
+          this.selectedTool === ToolType.TwoWayRoad ||
+          this.selectedTool === ToolType.SidewalklessRoad
         ) {
           this.isDragging = true;
           this.dragTiles.clear();
@@ -997,7 +1016,8 @@ export class MainScene extends Phaser.Scene {
           if (
             this.selectedTool === ToolType.RoadLane ||
             this.selectedTool === ToolType.RoadTurn ||
-            this.selectedTool === ToolType.TwoWayRoad
+            this.selectedTool === ToolType.TwoWayRoad ||
+            this.selectedTool === ToolType.SidewalklessRoad
           ) {
             // For road lanes, add the initial lane origin (snapped to 2x2 grid)
             const laneOrigin = getRoadLaneOrigin(
@@ -1006,7 +1026,7 @@ export class MainScene extends Phaser.Scene {
             );
             this.dragTiles.add(`${laneOrigin.x},${laneOrigin.y}`);
             // For 2-way roads, also add the parallel lane
-            if (this.selectedTool === ToolType.TwoWayRoad) {
+            if (this.selectedTool === ToolType.TwoWayRoad || this.selectedTool === ToolType.SidewalklessRoad) {
               // Add parallel lane (below for horizontal default, right for vertical)
               this.dragTiles.add(`${laneOrigin.x},${laneOrigin.y + ROAD_LANE_SIZE}`);
             }
@@ -1057,12 +1077,13 @@ export class MainScene extends Phaser.Scene {
               : TileType.RoadLane;
           this.events_.onRoadLaneDrag(tiles, this.roadLaneDirection, tileType);
         } else if (
-          this.selectedTool === ToolType.TwoWayRoad &&
+          (this.selectedTool === ToolType.TwoWayRoad || this.selectedTool === ToolType.SidewalklessRoad) &&
           this.events_.onTwoWayRoadDrag &&
           this.dragDirection
         ) {
           // 2-way road drag - parallel lanes collected during drag
-          this.events_.onTwoWayRoadDrag(tiles, this.dragDirection);
+          const includeSidewalks = this.selectedTool === ToolType.TwoWayRoad;
+          this.events_.onTwoWayRoadDrag(tiles, this.dragDirection, includeSidewalks);
         } else if (this.events_.onTilesDrag) {
           // Snow/Tile place immediately
           this.events_.onTilesDrag(tiles);
@@ -1304,7 +1325,7 @@ export class MainScene extends Phaser.Scene {
     for (let y = 0; y < GRID_HEIGHT; y++) {
       for (let x = 0; x < GRID_WIDTH; x++) {
         const tileType = this.grid[y][x].type;
-        if (tileType === TileType.Sidewalk || tileType === TileType.Tile) {
+        if (tileType === TileType.Sidewalk || tileType === TileType.Tile || tileType === TileType.Cobblestone) {
           roadTiles.push({ x, y });
         }
       }
@@ -1516,6 +1537,8 @@ export class MainScene extends Phaser.Scene {
           color = 0x4488ff;
         } else if (tileType === TileType.Tile) {
           color = 0x44dddd;
+        } else if (tileType === TileType.Cobblestone) {
+          color = 0xcc88ff; // Purple for cobblestone (walkable)
         } else if (tileType === TileType.Asphalt) {
           color = 0xffcc00;
         }
@@ -1708,51 +1731,64 @@ export class MainScene extends Phaser.Scene {
     this.groundLayer.putTileAt(tileIndex, x, y);
   }
 
-  // Get the tile index for a grid cell
-  // Handles both quadrant tiles (road, asphalt) and non-quadrant tiles (grass, snow)
-  private getTileIndexForCell(cell: GridCell, x: number, y: number): number {
-    // Helper for quadrant offset (0=TL, 1=TR, 2=BL, 3=BR)
-    const getQuadrant = () => (y % 2) * 2 + (x % 2);
+  // Check if a neighbor tile is a walkable surface (sidewalk, tile, cobblestone)
+  private isWalkableAt(x: number, y: number): boolean {
+    if (x < 0 || x >= GRID_WIDTH || y < 0 || y >= GRID_HEIGHT) return false;
+    const cell = this.grid[y]?.[x];
+    return cell?.type === TileType.Sidewalk || cell?.type === TileType.Tile || cell?.type === TileType.Cobblestone;
+  }
 
-    if (cell.type === TileType.Sidewalk || cell.type === TileType.Tile) {
-      // Quadrant tile
-      return TileIndex.RoadTL + getQuadrant();
-    } else if (
-      cell.type === TileType.Asphalt ||
-      cell.type === TileType.RoadLane ||
-      cell.type === TileType.RoadTurn
-    ) {
-      // Quadrant tile - road lanes render as asphalt
-      return TileIndex.AsphaltTL + getQuadrant();
-    } else if (cell.type === TileType.Snow) {
-      // Non-quadrant, but with variants
-      const variant = (x * 7 + y * 13) % 3;
-      return TileIndex.Snow1 + variant;
-    } else if (cell.type === TileType.Building) {
-      // For buildings, check if it preserves underlying tile
-      if (cell.buildingId) {
+  // Get the tile index for a grid cell
+  // Handles road edge detection for sidewalk borders
+  private getTileIndexForCell(cell: GridCell, x: number, y: number): number {
+    // Helper to get the underlying tile type (for props/decorations)
+    const getEffectiveType = (): TileType => {
+      if (cell.type === TileType.Building && cell.buildingId) {
         const building = getBuilding(cell.buildingId);
-        const preservesTile =
-          building && (building.category === "props" || building.isDecoration);
+        const preservesTile = building && (building.category === "props" || building.isDecoration);
         if (preservesTile && cell.underlyingTileType) {
-          if (
-            cell.underlyingTileType === TileType.Tile ||
-            cell.underlyingTileType === TileType.Sidewalk
-          ) {
-            return TileIndex.RoadTL + getQuadrant();
-          } else if (cell.underlyingTileType === TileType.Asphalt) {
-            return TileIndex.AsphaltTL + getQuadrant();
-          } else if (cell.underlyingTileType === TileType.Snow) {
-            const variant = (x * 7 + y * 13) % 3;
-            return TileIndex.Snow1 + variant;
-          }
-        } else if (!preservesTile) {
-          // Non-decorative buildings show road underneath
-          return TileIndex.RoadTL + getQuadrant();
+          return cell.underlyingTileType;
         }
       }
+      return cell.type;
+    };
+
+    const effectiveType = getEffectiveType();
+
+    // Simple tile types
+    if (effectiveType === TileType.Grass) {
+      return TileIndex.Grass;
+    } else if (effectiveType === TileType.Snow) {
+      const variant = (x * 7 + y * 13) % 3;
+      return TileIndex.Snow1 + variant;
+    } else if (effectiveType === TileType.Sidewalk || effectiveType === TileType.Tile) {
+      return TileIndex.Sidewalk;
+    } else if (effectiveType === TileType.Asphalt) {
+      return TileIndex.Asphalt;
+    } else if (effectiveType === TileType.Cobblestone) {
+      return TileIndex.Cobblestone;
+    } else if (effectiveType === TileType.RoadLane || effectiveType === TileType.RoadTurn) {
+      // Road lanes - check for adjacent walkable surfaces to determine edge tile
+      // Check all 4 directions for walkable surfaces
+      const hasNorth = this.isWalkableAt(x, y - 1);
+      const hasSouth = this.isWalkableAt(x, y + 1);
+      const hasEast = this.isWalkableAt(x + 1, y);
+      const hasWest = this.isWalkableAt(x - 1, y);
+
+      // Priority: pick one edge (for now, prioritize north > south > east > west)
+      // TODO: Could use corner tiles for multiple edges
+      if (hasNorth) return TileIndex.RoadEdgeNorth;
+      if (hasSouth) return TileIndex.RoadEdgeSouth;
+      if (hasEast) return TileIndex.RoadEdgeEast;
+      if (hasWest) return TileIndex.RoadEdgeWest;
+
+      // No adjacent sidewalk - use plain road
+      return TileIndex.Road;
+    } else if (effectiveType === TileType.Building) {
+      // Non-decorative buildings show grass (no auto-tiling)
       return TileIndex.Grass;
     }
+
     return TileIndex.Grass;
   }
 
@@ -2435,7 +2471,7 @@ export class MainScene extends Phaser.Scene {
           );
         }
       }
-    } else if (this.selectedTool === ToolType.TwoWayRoad) {
+    } else if (this.selectedTool === ToolType.TwoWayRoad || this.selectedTool === ToolType.SidewalklessRoad) {
       // Get lanes to preview - either drag set or just hover lane
       const lanesToPreview: Array<{ x: number; y: number }> = [];
       if (this.isDragging && this.dragTiles.size > 0) {
@@ -2474,8 +2510,8 @@ export class MainScene extends Phaser.Scene {
         }
       }
 
-      // Draw sidewalk previews on outer edges
-      if (lanesToPreview.length > 0) {
+      // Draw sidewalk previews on outer edges (only for TwoWayRoad, not SidewalklessRoad)
+      if (this.selectedTool === ToolType.TwoWayRoad && lanesToPreview.length > 0) {
         // Determine orientation from drag or assume vertical for hover
         const orientation = this.dragDirection || "vertical";
         const sidewalkTiles: Array<{ x: number; y: number }> = [];
@@ -2630,6 +2666,56 @@ export class MainScene extends Phaser.Scene {
           this.previewSprites.push(preview);
         }
       }
+    } else if (this.selectedTool === ToolType.Cobblestone) {
+      // Get tiles to preview - either drag set or just hover tile
+      const tilesToPreview: Array<{ x: number; y: number }> = [];
+      if (this.isDragging && this.dragTiles.size > 0) {
+        this.dragTiles.forEach((key) => {
+          const [tx, ty] = key.split(",").map(Number);
+          tilesToPreview.push({ x: tx, y: ty });
+        });
+      } else if (x >= 0 && x < GRID_WIDTH && y >= 0 && y < GRID_HEIGHT) {
+        tilesToPreview.push({ x, y });
+      }
+
+      for (const tile of tilesToPreview) {
+        const tx = tile.x;
+        const ty = tile.y;
+        if (tx >= 0 && tx < GRID_WIDTH && ty >= 0 && ty < GRID_HEIGHT) {
+          const cell = this.grid[ty]?.[tx];
+          // Allow placing cobblestone on grass, snow, tile, sidewalk, or under decorations
+          let hasCollision = false;
+          if (cell) {
+            if (cell.type === TileType.Building && cell.buildingId) {
+              const existingBuilding = getBuilding(cell.buildingId);
+              hasCollision =
+                !existingBuilding ||
+                (!existingBuilding.isDecoration &&
+                  existingBuilding.category !== "props");
+            } else if (
+              cell.type !== TileType.Grass &&
+              cell.type !== TileType.Snow &&
+              cell.type !== TileType.Tile &&
+              cell.type !== TileType.Sidewalk
+            ) {
+              hasCollision = true;
+            }
+          }
+          const screenPos = this.gridToScreen(tx, ty);
+          const preview = this.add.image(screenPos.x, screenPos.y, "cobblestone");
+          preview.setOrigin(0.5, 0);
+          preview.setScale(
+            SUBTILE_WIDTH / preview.width,
+            SUBTILE_HEIGHT / preview.height
+          );
+          preview.setAlpha(hasCollision ? 0.3 : 0.7);
+          if (hasCollision) preview.setTint(0xff0000);
+          preview.setDepth(
+            this.depthFromSortPoint(screenPos.x, screenPos.y, 1_000_000)
+          );
+          this.previewSprites.push(preview);
+        }
+      }
     } else if (this.selectedTool === ToolType.Snow) {
       // Get tiles to preview - either drag set or just hover tile
       const tilesToPreview: Array<{ x: number; y: number }> = [];
@@ -2722,12 +2808,14 @@ export class MainScene extends Phaser.Scene {
                 } else if (
                   cellType !== TileType.Grass &&
                   cellType !== TileType.Tile &&
-                  cellType !== TileType.Snow
+                  cellType !== TileType.Snow &&
+                  cellType !== TileType.Sidewalk
                 ) {
                   footprintCollision = true;
                 }
               } else {
-                if (cellType !== TileType.Grass) {
+                // Buildings can be placed on any ground tile, but not on other buildings or roads
+                if (cellType === TileType.Building || cellType === TileType.RoadLane || cellType === TileType.RoadTurn) {
                   footprintCollision = true;
                 }
               }
@@ -2736,35 +2824,8 @@ export class MainScene extends Phaser.Scene {
         }
       }
 
-      // Only show lot tiles for non-decorative buildings (decorations preserve underlying tile)
-      if (!isDecoration) {
-        for (let dy = 0; dy < footprint.height; dy++) {
-          for (let dx = 0; dx < footprint.width; dx++) {
-            const tileX = originX + dx;
-            const tileY = originY + dy;
-            if (
-              tileX >= 0 &&
-              tileY >= 0 &&
-              tileX < GRID_WIDTH &&
-              tileY < GRID_HEIGHT
-            ) {
-              const screenPos = this.gridToScreen(tileX, tileY);
-              const lotTile = this.add.image(screenPos.x, screenPos.y, "road");
-              lotTile.setOrigin(0.5, 0);
-              lotTile.setScale(
-                SUBTILE_WIDTH / lotTile.width,
-                SUBTILE_HEIGHT / lotTile.height
-              );
-              lotTile.setAlpha(footprintCollision ? 0.3 : 0.5);
-              if (footprintCollision) lotTile.setTint(0xff0000);
-              lotTile.setDepth(
-                this.depthFromSortPoint(screenPos.x, screenPos.y, 1_000_000)
-              );
-              this.previewSprites.push(lotTile);
-            }
-          }
-        }
-      }
+      // No auto-tiling preview - buildings place on existing tiles
+      // Users can manually place tiles under buildings if desired
 
       // Always show building preview, but tint red if collision
       const textureKey = this.getBuildingTextureKey(

@@ -336,10 +336,10 @@ export function updateDeadEnds(
 // SIMPLE NAVIGATION HELPERS
 // ============================================
 
-// Check if a position is walkable (sidewalk or tile)
+// Check if a position is walkable (sidewalk, tile, or cobblestone)
 export function isWalkable(grid: GridCell[][], x: number, y: number): boolean {
   const cell = grid[Math.floor(y)]?.[Math.floor(x)];
-  return cell?.type === TileType.Sidewalk || cell?.type === TileType.Tile;
+  return cell?.type === TileType.Sidewalk || cell?.type === TileType.Tile || cell?.type === TileType.Cobblestone;
 }
 
 // Check if a position is drivable (road lane or asphalt)
