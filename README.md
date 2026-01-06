@@ -252,7 +252,7 @@ Set up your camera at the correct isometric angle and render out sprites for eac
 **Camera setup for 2:1 isometric:**
 - Orthographic projection
 - 30° rotation from top-down
-- 45° rotation for each cardinal direction (0°, 90°, 180°, 270°)
+- 90° rotation for each cardinal direction (0°, 90°, 180°, 270°)
 
 ### 4. Post-Processing
 Clean up your renders and ensure consistency:
@@ -306,7 +306,6 @@ Contributions are welcome! Some areas that could use help:
 
 - **More buildings** - Different architectural styles, eras, themes
 - **Performance** - Optimization for larger maps
-- **Features** - See `ROADMAP.md` for planned features
 - **Documentation** - Tutorials, examples, better docs
 
 ---
