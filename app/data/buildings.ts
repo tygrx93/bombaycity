@@ -6,6 +6,7 @@ export type BuildingCategory =
   | "commercial"
   | "civic"
   | "landmark"
+  | "mumbai_landmarks"
   | "props"
   | "christmas";
 
@@ -1267,6 +1268,62 @@ export const BUILDINGS: Record<string, BuildingDefinition> = {
     icon: "🏬",
     supportsRotation: true,
   },
+  // 🇮🇳 MUMBAI LANDMARKS 🇮🇳
+  "gateway-of-india": {
+    id: "gateway-of-india",
+    name: "Gateway of India",
+    category: "mumbai_landmarks",
+    footprint: { width: 4, height: 4 },
+    sprites: {
+      south: "/Building/mumbai/4x4gateway_of_india_south.png",
+    },
+    icon: "🏛️",
+    supportsRotation: false,
+  },
+  "taj-hotel": {
+    id: "taj-hotel",
+    name: "Taj Mahal Palace Hotel",
+    category: "mumbai_landmarks",
+    footprint: { width: 6, height: 6 },
+    sprites: {
+      south: "/Building/mumbai/6x6taj_hotel_south.png",
+    },
+    icon: "🏨",
+    supportsRotation: false,
+  },
+  "cst-station": {
+    id: "cst-station",
+    name: "CST Railway Station",
+    category: "mumbai_landmarks",
+    footprint: { width: 8, height: 8 },
+    sprites: {
+      south: "/Building/mumbai/8x8cst_station_south.png",
+    },
+    icon: "🚂",
+    supportsRotation: false,
+  },
+  "bdd-chawl": {
+    id: "bdd-chawl",
+    name: "BDD Chawl",
+    category: "mumbai_landmarks",
+    footprint: { width: 4, height: 3 },
+    sprites: {
+      south: "/Building/mumbai/4x3bdd_chawl_south.png",
+    },
+    icon: "🏘️",
+    supportsRotation: false,
+  },
+  "marine-drive-apt": {
+    id: "marine-drive-apt",
+    name: "Marine Drive Apartment",
+    category: "mumbai_landmarks",
+    footprint: { width: 3, height: 3 },
+    sprites: {
+      south: "/Building/mumbai/3x3marine_drive_apt_south.png",
+    },
+    icon: "🏢",
+    supportsRotation: false,
+  },
 };
 
 // Helper to get building by ID
@@ -1283,6 +1340,7 @@ export function getBuildingsByCategory(
 
 // Helper to get all categories that have buildings (in display order)
 const CATEGORY_ORDER: BuildingCategory[] = [
+  "mumbai_landmarks",
   "residential",
   "commercial",
   "props",
@@ -1300,6 +1358,7 @@ export function getCategories(): BuildingCategory[] {
 
 // Category display names
 export const CATEGORY_NAMES: Record<BuildingCategory, string> = {
+  mumbai_landmarks: "🇮🇳 Mumbai",
   residential: "Residential",
   commercial: "Commercial",
   civic: "Civic",
